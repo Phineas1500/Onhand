@@ -370,6 +370,45 @@ async function assertClaudeRequestsUseLowEffortThinking() {
 	console.log("Claude requests use low-effort thinking passed");
 }
 
+// Slow answers came from turns that kept retrying failed page actions.
+// Telemetry names each failure's tool and coarse reason (never its text), and
+// past five failed page actions or a minute of failed tool time the model is
+// told to answer now. Marks keep their own budgets and stay allowed.
+async function assertRepeatedToolFailuresAnswerNow() {
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const failed = (toolName, error, duration_ms = 1000, extra = {}) => ({ toolName, state: "error", error, duration_ms, ...extra });
+	const traces = [
+		failed("browser_get_visible_text", "Timed out waiting for the page after 15000ms", 15000),
+		failed("browser_get_visible_text", "Command timed out", 15000),
+		failed("browser_highlight_text", "No visible text matched: the private sentence the user read"),
+		failed("browser_navigate", "No tab with id: 812."),
+		failed("browser_extract_content", "Could not establish connection. Receiving end does not exist."),
+		failed("browser_highlight_text", "Guardrail blocked browser_highlight_text: too long", 5, { resultDetails: { guardrail: { kind: "weak_highlight" } } }),
+		{ toolName: "browser_list_tabs", state: "complete", duration_ms: 200 },
+	];
+	const reliability = test.summarizeToolReliabilityForTest([], [], traces);
+	assert.equal(
+		reliability.tool_failure_reasons,
+		"get_visible_text:timeout*2,highlight_text:no_match*1,navigate:tab*1,extract_content:unreachable*1,highlight_text:guard*1",
+	);
+	assert.doesNotMatch(reliability.tool_failure_reasons, /private sentence|812/, "reasons never carry page text or ids");
+	assert.equal(reliability.tool_duration_ms, 33205);
+	assert.equal(reliability.failed_tool_duration_ms, 33005);
+
+	const guard = (commandName, toolTraces) => test.buildRepeatedToolFailureAnswerNowGuardResultForTest(`browser_${commandName}`, commandName, { toolTraces });
+	assert.equal(guard("extract_content", traces), null, "four page-action failures and 33 s are under both limits");
+	const fiveFailures = [...traces, failed("browser_click", "Element not found")];
+	assert.equal(guard("extract_content", fiveFailures)?.guardrail?.kind, "repeated_tool_failure_answer_now");
+	assert.equal(guard("highlight_text", fiveFailures), null, "marking already-read text stays allowed");
+	assert.equal(guard("show_note", fiveFailures), null);
+	const guardBlocks = Array.from({ length: 8 }, () => failed("browser_get_visible_text", "Guardrail blocked browser_get_visible_text: repeated", 5, { resultDetails: { guardrail: { kind: "repeated_viewport_read" } } }));
+	assert.equal(guard("navigate", guardBlocks), null, "guard course-corrections are not failures");
+	const slowHighlights = Array.from({ length: 4 }, () => failed("browser_highlight_text", "Highlight timed out", 16000));
+	assert.equal(guard("navigate", slowHighlights)?.guardrail?.kind, "repeated_tool_failure_answer_now", "a minute of failed tool time also stops the retries");
+	assert.equal(test.buildRepeatedToolFailureAnswerNowGuardResultForTest("browser_navigate", "navigate", { toolTraces: fiveFailures, aborted: true }), null);
+	console.log("Repeated tool failures answer now passed");
+}
+
 async function assertOpenRouterRequestsIdentifyOnhand() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -3487,6 +3526,9 @@ async function assertToolRetryActivitiesFinalizeAsRecovered() {
 		tool_failure_count: 1,
 		recovered_tool_failure_count: 1,
 		final_tool_failure_count: 0,
+		tool_failure_reasons: "",
+		tool_duration_ms: 0,
+		failed_tool_duration_ms: 0,
 	});
 
 	const failed = finalizePublicActivitiesForTest(transientActivities, new Error("prompt failed"));
@@ -3496,6 +3538,9 @@ async function assertToolRetryActivitiesFinalizeAsRecovered() {
 		tool_failure_count: 1,
 		recovered_tool_failure_count: 0,
 		final_tool_failure_count: 1,
+		tool_failure_reasons: "",
+		tool_duration_ms: 0,
+		failed_tool_duration_ms: 0,
 	});
 
 	assert.deepEqual(
@@ -3508,6 +3553,9 @@ async function assertToolRetryActivitiesFinalizeAsRecovered() {
 			tool_failure_count: 0,
 			recovered_tool_failure_count: 0,
 			final_tool_failure_count: 0,
+			tool_failure_reasons: "",
+			tool_duration_ms: 0,
+			failed_tool_duration_ms: 0,
 		},
 	);
 }
@@ -13410,6 +13458,7 @@ async function main() {
 	await assertProviderApiKeyStorageAndRouting();
 	await assertIntentClassifierSendsItsInstructions();
 	await assertClaudeRequestsUseLowEffortThinking();
+	await assertRepeatedToolFailuresAnswerNow();
 	await assertOpenRouterRequestsIdentifyOnhand();
 	await assertDecisionsIntentClassifier();
 	await assertChromeWebStoreTabGetsPlainContextNote();

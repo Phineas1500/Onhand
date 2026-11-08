@@ -89116,6 +89116,65 @@ function buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, r
     }
   };
 }
+var TOOL_FAILURE_ANSWER_NOW_LIMIT = 5;
+var FAILED_TOOL_TIME_ANSWER_NOW_MS = 6e4;
+var MARK_COMMANDS = /* @__PURE__ */ new Set(["highlight_text", "show_note"]);
+function isCountableToolFailureTrace(trace) {
+  return trace?.state === "error" && !isGuardrailBlockedTrace(trace) && !/^guardrail blocked/i.test(String(trace?.error || ""));
+}
+function shouldAnswerNowAfterRepeatedToolFailures(request2) {
+  if (!request2 || request2.aborted) return false;
+  const failures = (Array.isArray(request2.toolTraces) ? request2.toolTraces : []).filter(isCountableToolFailureTrace);
+  const pageActionFailures = failures.filter((trace) => !["browser_highlight_text", "browser_show_note"].includes(trace.toolName));
+  const failedMs = failures.reduce((total, trace) => total + Math.max(0, Number(trace.duration_ms) || 0), 0);
+  return pageActionFailures.length >= TOOL_FAILURE_ANSWER_NOW_LIMIT || failedMs >= FAILED_TOOL_TIME_ANSWER_NOW_MS;
+}
+function buildRepeatedToolFailureAnswerNowGuardResult(toolName2, commandName, request2) {
+  if (MARK_COMMANDS.has(commandName)) return null;
+  if (!shouldAnswerNowAfterRepeatedToolFailures(request2)) return null;
+  return {
+    guardrail: {
+      kind: "repeated_tool_failure_answer_now",
+      blockedTool: toolName2,
+      blockedCommand: commandName,
+      message: [
+        "Page actions have failed repeatedly this turn, and retrying is costing the user time.",
+        `Do not call ${toolName2} or other page read, navigation, or interaction tools for this turn.`,
+        "Answer the user's question now from what you have already read; you may still highlight or annotate text you have already read.",
+        "If part of the answer depends on something you could not read, say so in one short sentence. Never mention internal budgets, guardrails, or tool limits."
+      ].join(" ")
+    }
+  };
+}
+function classifyToolFailureTrace(trace) {
+  const text = String(trace?.error || trace?.resultSummary || "").toLowerCase();
+  if (isGuardrailBlockedTrace(trace) || text.startsWith("guardrail blocked")) return "guard";
+  if (/timed? ?out|timeout|took too long/.test(text)) return "timeout";
+  if (/no (visible )?text matched|not found on (the )?page|could not (find|locate)|no match/.test(text)) return "no_match";
+  if (/no tab with id|tab (was )?closed|tab not found|invalid tab/.test(text)) return "tab";
+  if (/receiving end does not exist|could not establish connection|frame (was )?removed|context invalidated|no frame/.test(text)) return "unreachable";
+  if (/cannot access|cannot be scripted|chrome:\/\/|chrome-extension:\/\/|restricted|permission|not allowed/.test(text)) return "restricted";
+  if (/navigat|page (changed|reloaded)|back\/forward cache/.test(text)) return "page_changed";
+  if (/failed to fetch|network|net::|\b(403|404|429|500|502|503)\b/.test(text)) return "network";
+  if (/invalid|expected|required|must be|schema|validation/.test(text)) return "bad_args";
+  return "other";
+}
+var TOOL_FAILURE_REASONS_MAX_CHARS = 160;
+function summarizeToolFailureReasons(traces = []) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const trace of traces) {
+    if (trace?.state !== "error" || !trace.toolName) continue;
+    const key = `${String(trace.toolName).replace(/^browser_/, "")}:${classifyToolFailureTrace(trace)}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  let summary = "";
+  for (const [key, count] of [...counts].sort((a, b) => b[1] - a[1])) {
+    const next = `${summary ? `${summary},` : ""}${key}*${count}`;
+    if (next.length > TOOL_FAILURE_REASONS_MAX_CHARS) break;
+    summary = next;
+  }
+  return summary;
+}
 function getSelectionText(selection) {
   if (typeof selection === "string") return selection.trim();
   if (selection && typeof selection === "object" && typeof selection.text === "string") {
@@ -96122,6 +96181,7 @@ var __browserRuntimeTest = {
   humanizeProviderErrorMessageForTest: humanizeProviderErrorMessage,
   describeRejectedApiKeyForTest: describeRejectedApiKey,
   streamOnhandProviderForTest: streamOnhandProvider,
+  buildRepeatedToolFailureAnswerNowGuardResultForTest: buildRepeatedToolFailureAnswerNowGuardResult,
   ensurePdfAbsenceReviewScopeForTest: ensurePdfAbsenceReviewScope,
   setLearnerStateModeForTest: setLearnerStateMode,
   buildHighlightTimeoutTabGuardResultForTest: buildHighlightTimeoutTabGuardResult,
@@ -97501,15 +97561,21 @@ function finalizePublicActivities(activities = [], finalError = null) {
     return { ...activity, state: finalError ? "error" : "recovered" };
   });
 }
-function summarizeToolReliability(activities = [], pageActions = []) {
+function summarizeToolReliability(activities = [], pageActions = [], toolTraces = []) {
   const publicActivities = getPublicActivities(activities);
   const pageActionCount = Array.isArray(pageActions) ? pageActions.length : 0;
   const failedStates = /* @__PURE__ */ new Set(["retrying", "recovered", "error"]);
+  const traces = Array.isArray(toolTraces) ? toolTraces : [];
+  const traceMs = (trace) => Math.max(0, Number(trace?.duration_ms) || 0);
   return {
     tool_step_count: Math.max(publicActivities.length, pageActionCount),
     tool_failure_count: publicActivities.filter((activity) => failedStates.has(activity.state || "")).length,
     recovered_tool_failure_count: publicActivities.filter((activity) => activity.state === "recovered").length,
-    final_tool_failure_count: publicActivities.filter((activity) => activity.state === "error").length
+    final_tool_failure_count: publicActivities.filter((activity) => activity.state === "error").length,
+    tool_failure_reasons: summarizeToolFailureReasons(traces),
+    // Summed per call, so parallel calls can add up to more than the turn.
+    tool_duration_ms: traces.reduce((total, trace) => total + traceMs(trace), 0),
+    failed_tool_duration_ms: traces.filter((trace) => trace?.state === "error").reduce((total, trace) => total + traceMs(trace), 0)
   };
 }
 function markRecoveredToolRetries(activities = [], toolName2) {
@@ -97860,6 +97926,9 @@ function createOnhandBrowserRuntime(host) {
         data.recovered_tool_failure_count ?? data.recoveredToolFailureCount
       ),
       final_tool_failure_count: finiteTelemetryNumber(data.final_tool_failure_count ?? data.finalToolFailureCount),
+      tool_failure_reasons: compactTelemetryValue(data.tool_failure_reasons, 160),
+      tool_duration_ms: finiteTelemetryNumber(data.tool_duration_ms),
+      failed_tool_duration_ms: finiteTelemetryNumber(data.failed_tool_duration_ms),
       error_kind: compactTelemetryValue(data.error_kind ?? data.errorKind, 80)
     };
   }
@@ -98105,7 +98174,8 @@ function createOnhandBrowserRuntime(host) {
         recovered_tool_failure_count: finiteTelemetryNumber(
           data.recovered_tool_failure_count ?? data.recoveredToolFailureCount
         ),
-        final_tool_failure_count: finiteTelemetryNumber(data.final_tool_failure_count ?? data.finalToolFailureCount)
+        final_tool_failure_count: finiteTelemetryNumber(data.final_tool_failure_count ?? data.finalToolFailureCount),
+        tool_failure_reasons: compactTelemetryValue(data.tool_failure_reasons, 160)
       });
       captureException(capturedError);
     });
@@ -99263,7 +99333,7 @@ function createOnhandBrowserRuntime(host) {
           learningMode ? "learning" : "answer"
         ),
         (toolName2, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName2, toolCallId, effectiveParams),
-        (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildNoPageChangesGuardResult(toolName2, commandName, prompt) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
+        (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildNoPageChangesGuardResult(toolName2, commandName, prompt) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedToolFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
         async (effectiveParams) => {
           if (!effectiveParams?.scanPage) return null;
           const text = compactActionText(effectiveParams?.text);
@@ -99513,7 +99583,7 @@ function createOnhandBrowserRuntime(host) {
     }
     await autoPersistReviewSnapshot(session, activeRequest, finalError);
     const publicActivities = finalizePublicActivities(uiState?.activities || [], finalError);
-    const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || []);
+    const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || [], activeRequest.toolTraces || []);
     const errorReport = finalError ? buildErrorReportSnapshot(finalError, activeRequest, publicActivities) : null;
     const startedAtMs = Date.parse(activeRequest.createdAt || "");
     const turn = {
@@ -102107,7 +102177,7 @@ Mark and answer from this text. Call browser_extract_content again only to conti
                 learningMode ? "learning" : "answer"
               ),
               (toolName2, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName2, toolCallId, effectiveParams),
-              (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildNoPageChangesGuardResult(toolName2, commandName, prompt) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
+              (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildNoPageChangesGuardResult(toolName2, commandName, prompt) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedToolFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
               async (effectiveParams) => {
                 if (!effectiveParams?.scanPage) return null;
                 const text = compactActionText(effectiveParams?.text);

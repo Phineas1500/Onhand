@@ -302,10 +302,20 @@ coarse OS, such as `chrome/chromeos` or `firefox/windows`; scripts stay
 `other`); extension version/runtime revision/auth mode/
 AI provider/AI model/device hash/error code are `blob9` through
 `blob15`; Onhand turn id/session id/provider generation id/upstream
-model/provider request id are `blob16` through `blob20`. Numeric fields
-are timestamp, status, duration, body bytes, quota current, quota cap,
-prompt tokens, completion tokens, total tokens, cost, action count, and
-artifact count.
+model/provider request id are `blob16` through `blob20`. Extension prompt
+events (`prompt_succeeded`/`prompt_failed`/`prompt_stopped`) have no
+upstream model, so their `blob19` carries the turn's coarse tool-failure
+reasons instead: `tool:reason*count` entries such as
+`get_visible_text:timeout*2,highlight_text:no_match*1`, with the
+reason one of `guard`, `timeout`, `no_match`, `tab`, `unreachable`,
+`restricted`, `page_changed`, `network`, `bad_args` or `other`. They never
+contain page text or error messages; the Worker drops any entry that is not
+in that shape. Numeric fields are timestamp, status, duration, body bytes,
+quota current, quota cap, prompt tokens, completion tokens, total tokens,
+cost, action count, artifact count, tool step count, tool failure count,
+recovered tool failure count, final tool failure count, tool time, and
+failed tool time (`double1` through `double18`; the two tool times are
+summed per call, so parallel calls can add up to more than the turn).
 
 For free-tier chat events, `action count` is reused as the model-call count
 inside the current Onhand turn. `chat_turn_quota_denied` stops a runaway turn

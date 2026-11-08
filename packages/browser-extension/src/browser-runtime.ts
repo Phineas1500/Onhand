@@ -1914,6 +1914,81 @@ function buildPostHighlightFailureAnswerNowGuardResult(toolName: string, command
 	};
 }
 
+// A turn that keeps failing page actions (reads that time out, tabs that
+// vanish, pages that cannot be scripted) can spend minutes retrying before it
+// answers. Past either limit, the model answers from what it already has.
+// Highlights and notes keep their own failure budgets, so their misses only
+// count toward the time limit, and marking already-read text stays allowed.
+const TOOL_FAILURE_ANSWER_NOW_LIMIT = 5;
+const FAILED_TOOL_TIME_ANSWER_NOW_MS = 60_000;
+const MARK_COMMANDS = new Set(["highlight_text", "show_note"]);
+
+function isCountableToolFailureTrace(trace: any) {
+	return trace?.state === "error" && !isGuardrailBlockedTrace(trace) && !/^guardrail blocked/i.test(String(trace?.error || ""));
+}
+
+function shouldAnswerNowAfterRepeatedToolFailures(request: any) {
+	if (!request || request.aborted) return false;
+	const failures = (Array.isArray(request.toolTraces) ? request.toolTraces : []).filter(isCountableToolFailureTrace);
+	const pageActionFailures = failures.filter((trace: any) => !["browser_highlight_text", "browser_show_note"].includes(trace.toolName));
+	const failedMs = failures.reduce((total: number, trace: any) => total + Math.max(0, Number(trace.duration_ms) || 0), 0);
+	return pageActionFailures.length >= TOOL_FAILURE_ANSWER_NOW_LIMIT || failedMs >= FAILED_TOOL_TIME_ANSWER_NOW_MS;
+}
+
+function buildRepeatedToolFailureAnswerNowGuardResult(toolName: string, commandName: string, request: any) {
+	if (MARK_COMMANDS.has(commandName)) return null;
+	if (!shouldAnswerNowAfterRepeatedToolFailures(request)) return null;
+	return {
+		guardrail: {
+			kind: "repeated_tool_failure_answer_now",
+			blockedTool: toolName,
+			blockedCommand: commandName,
+			message: [
+				"Page actions have failed repeatedly this turn, and retrying is costing the user time.",
+				`Do not call ${toolName} or other page read, navigation, or interaction tools for this turn.`,
+				"Answer the user's question now from what you have already read; you may still highlight or annotate text you have already read.",
+				"If part of the answer depends on something you could not read, say so in one short sentence. Never mention internal budgets, guardrails, or tool limits.",
+			].join(" "),
+		},
+	};
+}
+
+// A coarse, content-free reason for a failed tool step, for telemetry: the
+// kind of failure only, never page text, arguments, or the error message.
+function classifyToolFailureTrace(trace: any) {
+	const text = String(trace?.error || trace?.resultSummary || "").toLowerCase();
+	if (isGuardrailBlockedTrace(trace) || text.startsWith("guardrail blocked")) return "guard";
+	if (/timed? ?out|timeout|took too long/.test(text)) return "timeout";
+	if (/no (visible )?text matched|not found on (the )?page|could not (find|locate)|no match/.test(text)) return "no_match";
+	if (/no tab with id|tab (was )?closed|tab not found|invalid tab/.test(text)) return "tab";
+	if (/receiving end does not exist|could not establish connection|frame (was )?removed|context invalidated|no frame/.test(text)) return "unreachable";
+	if (/cannot access|cannot be scripted|chrome:\/\/|chrome-extension:\/\/|restricted|permission|not allowed/.test(text)) return "restricted";
+	if (/navigat|page (changed|reloaded)|back\/forward cache/.test(text)) return "page_changed";
+	if (/failed to fetch|network|net::|\b(403|404|429|500|502|503)\b/.test(text)) return "network";
+	if (/invalid|expected|required|must be|schema|validation/.test(text)) return "bad_args";
+	return "other";
+}
+
+const TOOL_FAILURE_REASONS_MAX_CHARS = 160;
+
+// "highlight_text:no_match*3,read_page:timeout*1": failures by tool and
+// reason, most frequent first, cut at whole entries to fit the column.
+function summarizeToolFailureReasons(traces: any[] = []) {
+	const counts = new Map<string, number>();
+	for (const trace of traces) {
+		if (trace?.state !== "error" || !trace.toolName) continue;
+		const key = `${String(trace.toolName).replace(/^browser_/, "")}:${classifyToolFailureTrace(trace)}`;
+		counts.set(key, (counts.get(key) || 0) + 1);
+	}
+	let summary = "";
+	for (const [key, count] of [...counts].sort((a, b) => b[1] - a[1])) {
+		const next = `${summary ? `${summary},` : ""}${key}*${count}`;
+		if (next.length > TOOL_FAILURE_REASONS_MAX_CHARS) break;
+		summary = next;
+	}
+	return summary;
+}
+
 function getSelectionText(selection: unknown) {
 	if (typeof selection === "string") return selection.trim();
 	if (selection && typeof selection === "object" && typeof (selection as any).text === "string") {
@@ -11783,6 +11858,7 @@ export const __browserRuntimeTest = {
 	humanizeProviderErrorMessageForTest: humanizeProviderErrorMessage,
 	describeRejectedApiKeyForTest: describeRejectedApiKey,
 	streamOnhandProviderForTest: streamOnhandProvider,
+	buildRepeatedToolFailureAnswerNowGuardResultForTest: buildRepeatedToolFailureAnswerNowGuardResult,
 	ensurePdfAbsenceReviewScopeForTest: ensurePdfAbsenceReviewScope,
 	setLearnerStateModeForTest: setLearnerStateMode,
 	buildHighlightTimeoutTabGuardResultForTest: buildHighlightTimeoutTabGuardResult,
@@ -13286,15 +13362,21 @@ function finalizePublicActivities(activities: UiActivity[] = [], finalError: Err
 	});
 }
 
-function summarizeToolReliability(activities: UiActivity[] = [], pageActions: PageAction[] = []) {
+function summarizeToolReliability(activities: UiActivity[] = [], pageActions: PageAction[] = [], toolTraces: ToolTraceEntry[] = []) {
 	const publicActivities = getPublicActivities(activities);
 	const pageActionCount = Array.isArray(pageActions) ? pageActions.length : 0;
 	const failedStates = new Set(["retrying", "recovered", "error"]);
+	const traces = Array.isArray(toolTraces) ? toolTraces : [];
+	const traceMs = (trace: ToolTraceEntry) => Math.max(0, Number(trace?.duration_ms) || 0);
 	return {
 		tool_step_count: Math.max(publicActivities.length, pageActionCount),
 		tool_failure_count: publicActivities.filter((activity) => failedStates.has(activity.state || "")).length,
 		recovered_tool_failure_count: publicActivities.filter((activity) => activity.state === "recovered").length,
 		final_tool_failure_count: publicActivities.filter((activity) => activity.state === "error").length,
+		tool_failure_reasons: summarizeToolFailureReasons(traces),
+		// Summed per call, so parallel calls can add up to more than the turn.
+		tool_duration_ms: traces.reduce((total, trace) => total + traceMs(trace), 0),
+		failed_tool_duration_ms: traces.filter((trace) => trace?.state === "error").reduce((total, trace) => total + traceMs(trace), 0),
 	};
 }
 
@@ -13696,6 +13778,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				(data as any).recovered_tool_failure_count ?? (data as any).recoveredToolFailureCount,
 			),
 			final_tool_failure_count: finiteTelemetryNumber((data as any).final_tool_failure_count ?? (data as any).finalToolFailureCount),
+			tool_failure_reasons: compactTelemetryValue((data as any).tool_failure_reasons, 160),
+			tool_duration_ms: finiteTelemetryNumber((data as any).tool_duration_ms),
+			failed_tool_duration_ms: finiteTelemetryNumber((data as any).failed_tool_duration_ms),
 			error_kind: compactTelemetryValue((data as any).error_kind ?? (data as any).errorKind, 80),
 		};
 	}
@@ -14029,6 +14114,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					(data as any).recovered_tool_failure_count ?? (data as any).recoveredToolFailureCount,
 				),
 				final_tool_failure_count: finiteTelemetryNumber((data as any).final_tool_failure_count ?? (data as any).finalToolFailureCount),
+				tool_failure_reasons: compactTelemetryValue((data as any).tool_failure_reasons, 160),
 			});
 			Sentry.captureException(capturedError);
 		});
@@ -15278,6 +15364,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					buildHighlightTimeoutTabGuardResult(toolName, commandName, effectiveParams, activeRequest) ||
 					buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) ||
 					buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) ||
+					buildRepeatedToolFailureAnswerNowGuardResult(toolName, commandName, activeRequest) ||
 					buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) ||
 					buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) ||
 					buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) ||
@@ -15580,7 +15667,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		}
 		await autoPersistReviewSnapshot(session, activeRequest, finalError);
 		const publicActivities = finalizePublicActivities(uiState?.activities || [], finalError);
-		const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || []);
+		const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || [], activeRequest.toolTraces || []);
 		const errorReport = finalError ? buildErrorReportSnapshot(finalError, activeRequest, publicActivities) : null;
 		const startedAtMs = Date.parse(activeRequest.createdAt || "");
 		const turn: UiTurn = {
@@ -18480,6 +18567,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 								buildHighlightTimeoutTabGuardResult(toolName, commandName, effectiveParams, activeRequest) ||
 								buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) ||
 								buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) ||
+								buildRepeatedToolFailureAnswerNowGuardResult(toolName, commandName, activeRequest) ||
 								buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) ||
 								buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) ||
 								buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) ||

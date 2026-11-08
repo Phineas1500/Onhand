@@ -654,6 +654,38 @@ try {
 	console.log("Free-tier worker regressions: PASS (uninstall feedback)");
 }
 
+// Prompt telemetry carries coarse tool-failure reasons and tool time. Only
+// "tool:reason*count" entries are written, so free text sent in the field
+// never reaches Analytics Engine.
+{
+	const f = fixture();
+	const response = await worker.fetch(new Request("https://worker.test/v1/telemetry", {
+		method: "POST",
+		headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.8" },
+		body: JSON.stringify({
+			event_name: "prompt_succeeded",
+			client_id: "telemetry-test-device",
+			extension_version: "0.4.17",
+			data: {
+				source: "extension",
+				result: "ok",
+				tool_failure_count: 4,
+				tool_failure_reasons: "read_page:timeout*2,highlight_text:no_match*1,the page said: secret text,navigate:tab*1",
+				tool_duration_ms: 48200,
+				failed_tool_duration_ms: 31000,
+			},
+		}),
+	}), f.env, f.ctx);
+	assert.equal((await response.json()).accepted, true);
+	await f.flush();
+	const event = f.events.find((point) => point.indexes[0] === "prompt_succeeded");
+	assert.equal(event.blobs[18], "read_page:timeout*2,highlight_text:no_match*1,navigate:tab*1");
+	assert.equal(event.doubles[13], 4);
+	assert.equal(event.doubles[16], 48200);
+	assert.equal(event.doubles[17], 31000);
+	console.log("Free-tier worker regressions: PASS (tool failure reasons)");
+}
+
 const { runAdmissionRegressions } = await import("../workers/free-tier/tests/admission-regressions.mjs");
 await runAdmissionRegressions({ fixture, handle, providerMock, providerResponse, completionPayload, worker, day, token });
 

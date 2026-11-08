@@ -241,7 +241,9 @@ function analyticsDataPoint(eventName, fields, context) {
 			compactIdentifier(fields.turnId || "", 80),
 			compactIdentifier(fields.sessionId || "", 80),
 			compactIdentifier(fields.generationId || "", 120),
-			compactString(fields.upstreamModel || "", 160),
+			// Free chat events carry the upstream model here; extension prompt
+			// events carry their coarse tool-failure reasons instead.
+			compactString(fields.upstreamModel || fields.toolFailureReasons || "", 160),
 			compactIdentifier(fields.providerRequestId || "", 120),
 		],
 		doubles: [
@@ -261,6 +263,8 @@ function analyticsDataPoint(eventName, fields, context) {
 			finiteNumber(fields.toolFailureCount),
 			finiteNumber(fields.recoveredToolFailureCount),
 			finiteNumber(fields.finalToolFailureCount),
+			finiteNumber(fields.toolDurationMs),
+			finiteNumber(fields.failedToolDurationMs),
 		],
 	};
 }
@@ -991,7 +995,19 @@ function telemetryData(payload) {
 		toolFailureCount: finiteNumber(data.tool_failure_count ?? data.toolFailureCount),
 		recoveredToolFailureCount: finiteNumber(data.recovered_tool_failure_count ?? data.recoveredToolFailureCount),
 		finalToolFailureCount: finiteNumber(data.final_tool_failure_count ?? data.finalToolFailureCount),
+		toolFailureReasons: compactToolFailureReasons(data.tool_failure_reasons),
+		toolDurationMs: finiteNumber(data.tool_duration_ms),
+		failedToolDurationMs: finiteNumber(data.failed_tool_duration_ms),
 	};
+}
+
+// Only "tool:reason*count" entries pass, so free text sent in this field
+// (page content, error messages) never reaches Analytics Engine.
+function compactToolFailureReasons(value) {
+	return compactString(value, 160)
+		.split(",")
+		.filter((entry) => /^[a-z0-9_]{1,48}:[a-z_]{1,16}\*\d{1,3}$/.test(entry))
+		.join(",");
 }
 
 function telemetrySource(data) {
