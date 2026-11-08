@@ -6,7 +6,7 @@ const FREE_TIER_PROVIDER = "onhand-free";
 const API_PROVIDERS = {
 	openai: {
 		name: "OpenAI",
-		defaultModel: "gpt-4.1-mini",
+		defaultModel: "gpt-6-luna",
 		keyLabel: "OpenAI API key",
 		keyPlaceholder: "sk-...",
 		keyPrefix: "sk-",
@@ -14,7 +14,7 @@ const API_PROVIDERS = {
 	},
 	anthropic: {
 		name: "Anthropic",
-		defaultModel: "claude-sonnet-4-5-20250929",
+		defaultModel: "claude-opus-5-5",
 		keyLabel: "Anthropic API key",
 		keyPlaceholder: "sk-ant-...",
 		keyPrefix: "sk-ant-",

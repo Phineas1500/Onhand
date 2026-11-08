@@ -87882,7 +87882,7 @@ var RUNTIME_DB_VERSION = 2;
 var ARTIFACT_STORE_NAME = "browserArtifacts";
 var SESSION_STORE_NAME = "runtimeSessions";
 var OPENAI_API_PROVIDER = "openai";
-var OPENAI_API_MODEL = "gpt-4.1-mini";
+var OPENAI_API_MODEL = "gpt-6-luna";
 var OPENAI_CODEX_PROVIDER = "openai-codex";
 var OPENAI_CODEX_MODEL = "gpt-6-luna";
 var RETIRED_OPENAI_CODEX_MODELS = /* @__PURE__ */ new Set(["gpt-5.5", "gpt-5.3-codex-spark"]);
@@ -87928,7 +87928,8 @@ var OPENAI_CODEX_ADDITIONAL_MODELS = [
   }
 ];
 var ANTHROPIC_API_PROVIDER = "anthropic";
-var ANTHROPIC_API_MODEL = "claude-sonnet-4-5-20250929";
+var ANTHROPIC_API_MODEL = "claude-opus-5-5";
+var RETIRED_ANTHROPIC_API_MODELS = /* @__PURE__ */ new Set(["claude-sonnet-4-5-20250929", "claude-sonnet-4-5"]);
 var GOOGLE_API_PROVIDER = "google";
 var GOOGLE_API_MODEL = "gemini-3.8-flash";
 var OPENROUTER_API_PROVIDER = "openrouter";
@@ -88084,6 +88085,7 @@ var PRIOR_PAGE_CONTEXT_MAX_CHARS = 5200;
 var PRIOR_PAGE_CONTEXT_SECTION_MAX_CHARS = 950;
 var PRIOR_PAGE_CONTEXT_MAX_SECTIONS = 6;
 var ONHAND_MAX_OUTPUT_TOKENS = 1100;
+var CLAUDE_THINKING_HEADROOM_TOKENS = 4e3;
 var ONHAND_COMPACT_TEACHING_OUTPUT_TOKENS = 1600;
 var COMPACT_TEACHING_EXTRACT_MAX_CHARS = 5200;
 var IS_FIREFOX_RUNTIME = typeof globalThis.browser?.runtime?.getBrowserInfo === "function";
@@ -89868,7 +89870,7 @@ function getProviderModelOptions(providerId) {
         (model2) => !RETIRED_OPENAI_CODEX_MODELS.has(model2?.id) && !OPENAI_CODEX_ADDITIONAL_MODELS.some((additional) => additional.id === model2?.id)
       )
     ] : catalogModels;
-    return models.filter((model2) => model2?.input?.includes?.("text")).filter((model2) => providerId !== OPENROUTER_API_PROVIDER || /^deepseek\/deepseek-v4-(flash|pro)$/.test(model2.id)).map((model2) => ({
+    return models.filter((model2) => model2?.input?.includes?.("text")).filter((model2) => providerId !== ANTHROPIC_API_PROVIDER || !RETIRED_ANTHROPIC_API_MODELS.has(model2.id)).filter((model2) => providerId !== OPENROUTER_API_PROVIDER || /^deepseek\/deepseek-v4-(flash|pro)$/.test(model2.id)).map((model2) => ({
       id: model2.id,
       name: model2.name || model2.id,
       api: model2.api,
@@ -89909,6 +89911,7 @@ function normalizeModelForProvider(model2, provider2, authMode) {
     if (provider2 === OPENAI_CODEX_PROVIDER && RETIRED_OPENAI_CODEX_MODELS.has(trimmed)) return OPENAI_CODEX_MODEL;
     return trimmed || getDefaultOAuthModel(provider2) || OPENAI_CODEX_MODEL;
   }
+  if (provider2 === ANTHROPIC_API_PROVIDER && RETIRED_ANTHROPIC_API_MODELS.has(trimmed)) return ANTHROPIC_API_MODEL;
   return trimmed || getSupportedApiProvider(provider2)?.defaultModel || OPENAI_API_MODEL;
 }
 function requiresDiagnostics(authMode, provider2) {
@@ -96118,6 +96121,7 @@ var __browserRuntimeTest = {
   collectUncitedTurnMarkRemovalsForTest: collectUncitedTurnMarkRemovals,
   humanizeProviderErrorMessageForTest: humanizeProviderErrorMessage,
   describeRejectedApiKeyForTest: describeRejectedApiKey,
+  streamOnhandProviderForTest: streamOnhandProvider,
   ensurePdfAbsenceReviewScopeForTest: ensurePdfAbsenceReviewScope,
   setLearnerStateModeForTest: setLearnerStateMode,
   buildHighlightTimeoutTabGuardResultForTest: buildHighlightTimeoutTabGuardResult,
@@ -96576,6 +96580,13 @@ function streamOnhandProvider(model2, context, options = {}) {
       ...baseOptions,
       reasoningEffort: reasoningEffortForModel(effectiveModel, reasoningProfile?.reasoningEffort || "none"),
       reasoningSummary: "auto"
+    });
+  }
+  if (effectiveModel?.api === "anthropic-messages" && effectiveModel?.thinkingLevelMap?.off === null) {
+    return streamSimple10(effectiveModel, context, {
+      ...baseOptions,
+      reasoning: reasoningProfile?.reasoningEffort === "medium" ? "medium" : "low",
+      maxTokens: baseOptions.maxTokens + CLAUDE_THINKING_HEADROOM_TOKENS
     });
   }
   if (effectiveModel?.provider === OPENROUTER_API_PROVIDER) {

@@ -431,7 +431,7 @@ const RUNTIME_DB_VERSION = 2;
 const ARTIFACT_STORE_NAME = "browserArtifacts";
 const SESSION_STORE_NAME = "runtimeSessions";
 const OPENAI_API_PROVIDER = "openai";
-const OPENAI_API_MODEL = "gpt-4.1-mini";
+const OPENAI_API_MODEL = "gpt-6-luna";
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 const OPENAI_CODEX_MODEL = "gpt-6-luna";
 // Codex stops serving older models to ChatGPT accounts ("The 'gpt-5.5' model
@@ -485,7 +485,11 @@ const OPENAI_CODEX_ADDITIONAL_MODELS = [
 	},
 ] as const;
 const ANTHROPIC_API_PROVIDER = "anthropic";
-const ANTHROPIC_API_MODEL = "claude-sonnet-4-5-20250929";
+const ANTHROPIC_API_MODEL = "claude-opus-5-5";
+// Anthropic retires Claude Sonnet 4.5 on 2026-11-30. It was the default, and
+// the options page saves the default it shows, so a saved id moves to the
+// current default instead of failing every turn once it is gone.
+const RETIRED_ANTHROPIC_API_MODELS = new Set(["claude-sonnet-4-5-20250929", "claude-sonnet-4-5"]);
 const GOOGLE_API_PROVIDER = "google";
 // gemini-2.5-flash answers new keys with a 404 ("no longer available to new
 // users"; 2026-10-30) and Google points to 3.8 Flash.
@@ -679,6 +683,7 @@ const PRIOR_PAGE_CONTEXT_MAX_SECTIONS = 6;
 // Single output cap for the unified grounded profile: a ceiling against
 // runaway verbosity, not a target — the conciseness rules govern typical length.
 const ONHAND_MAX_OUTPUT_TOKENS = 1100;
+const CLAUDE_THINKING_HEADROOM_TOKENS = 4000;
 // Must fit the full compact-teaching mark budget (up to 6 highlight + 6 note
 // tool calls drafted in one batched generation) plus the chat synthesis.
 const ONHAND_COMPACT_TEACHING_OUTPUT_TOKENS = 1600;
@@ -2799,6 +2804,7 @@ function getProviderModelOptions(providerId: string) {
 				: catalogModels;
 		return models
 			.filter((model: any) => model?.input?.includes?.("text"))
+			.filter((model: any) => providerId !== ANTHROPIC_API_PROVIDER || !RETIRED_ANTHROPIC_API_MODELS.has(model.id))
 			// OpenRouter lists hundreds of models; offer the validated cheap
 			// defaults and let the custom-model field cover the rest.
 			.filter((model: any) => providerId !== OPENROUTER_API_PROVIDER || /^deepseek\/deepseek-v4-(flash|pro)$/.test(model.id))
@@ -2847,6 +2853,7 @@ function normalizeModelForProvider(model: string, provider: string, authMode: Ru
 		if (provider === OPENAI_CODEX_PROVIDER && RETIRED_OPENAI_CODEX_MODELS.has(trimmed)) return OPENAI_CODEX_MODEL;
 		return trimmed || getDefaultOAuthModel(provider) || OPENAI_CODEX_MODEL;
 	}
+	if (provider === ANTHROPIC_API_PROVIDER && RETIRED_ANTHROPIC_API_MODELS.has(trimmed)) return ANTHROPIC_API_MODEL;
 	return trimmed || getSupportedApiProvider(provider)?.defaultModel || OPENAI_API_MODEL;
 }
 
@@ -11775,6 +11782,7 @@ export const __browserRuntimeTest = {
 	collectUncitedTurnMarkRemovalsForTest: collectUncitedTurnMarkRemovals,
 	humanizeProviderErrorMessageForTest: humanizeProviderErrorMessage,
 	describeRejectedApiKeyForTest: describeRejectedApiKey,
+	streamOnhandProviderForTest: streamOnhandProvider,
 	ensurePdfAbsenceReviewScopeForTest: ensurePdfAbsenceReviewScope,
 	setLearnerStateModeForTest: setLearnerStateMode,
 	buildHighlightTimeoutTabGuardResultForTest: buildHighlightTimeoutTabGuardResult,
@@ -12274,6 +12282,17 @@ function streamOnhandProvider(model: any, context: any, options: any = {}) {
 			...baseOptions,
 			reasoningEffort: reasoningEffortForModel(effectiveModel, reasoningProfile?.reasoningEffort || "none"),
 			reasoningSummary: "auto",
+		});
+	}
+	if (effectiveModel?.api === "anthropic-messages" && effectiveModel?.thinkingLevelMap?.off === null) {
+		// Claude models that cannot turn thinking off (Opus 5.5, Sonnet 5.5)
+		// think at high effort unless asked otherwise, and the thinking counts
+		// toward max_tokens. Ask for Onhand's low effort and give the thinking
+		// room on top of the answer cap so it cannot crowd out the reply.
+		return streamSimple(effectiveModel, context, {
+			...baseOptions,
+			reasoning: reasoningProfile?.reasoningEffort === "medium" ? "medium" : "low",
+			maxTokens: baseOptions.maxTokens + CLAUDE_THINKING_HEADROOM_TOKENS,
 		});
 	}
 	if (effectiveModel?.provider === OPENROUTER_API_PROVIDER) {

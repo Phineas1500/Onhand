@@ -333,6 +333,43 @@ async function assertIntentClassifierSendsItsInstructions() {
 // pi-agent-core 1.4 attributes agent-loop requests to pi (OpenRouter's
 // HTTP-Referer https://pi.dev, app title "pi"). Onhand's requests must name
 // Onhand instead.
+// Opus 5.5 and Sonnet 5.5 cannot turn thinking off and default to high
+// effort, with the thinking counted toward max_tokens. Onhand's turns must
+// ask for low effort, leave the thinking room above the answer cap, and send
+// nothing those models reject (temperature, forced tool_choice, budget_tokens).
+async function assertClaudeRequestsUseLowEffortThinking() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const runtime = createOnhandBrowserRuntime(createReplayHost());
+	const settings = await runtime.updateSettings({ aiProvider: "anthropic", aiModel: "claude-opus-5-5", authMode: "api-key", aiApiKeys: { anthropic: "sk-ant-test" } });
+	const defaultModelOf = (id) => settings.apiKeyProviders.find((provider) => provider.id === id)?.defaultModel;
+	assert.equal(defaultModelOf("anthropic"), "claude-opus-5-5", "Anthropic keys default to Claude Opus 5.5");
+	assert.equal(defaultModelOf("openai"), "gpt-6-luna", "OpenAI keys default to GPT-6 Luna, the model Free and ChatGPT sign-in use");
+	const originalFetch = globalThis.fetch;
+	const requestBodies = [];
+	globalThis.fetch = async (url, init = {}) => {
+		if (String(url).includes("api.anthropic.com")) requestBodies.push(JSON.parse(String(init.body || "{}")));
+		return new Response(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "stubbed" } }), { status: 400, headers: { "content-type": "application/json" } });
+	};
+	try {
+		await runtime.submitPrompt({ prompt: "Summarize this page.", displayPrompt: "Summarize this page.", attachments: [] });
+		await waitForRuntimeCompletion(runtime);
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+	const turnRequests = requestBodies.filter((body) => body.model === "claude-opus-5-5" && Array.isArray(body.tools) && body.tools.length > 0);
+	assert.ok(turnRequests.length > 0, "the turn should reach Anthropic with its tools");
+	for (const body of turnRequests) {
+		assert.equal(body.thinking?.type, "adaptive", "Opus 5.5 turns use adaptive thinking");
+		assert.equal(body.thinking?.budget_tokens, undefined, "budget_tokens is rejected on Opus 5.5");
+		assert.equal(body.temperature, undefined, "temperature is rejected on Opus 5.5");
+		assert.ok(!["any", "tool"].includes(body.tool_choice?.type), "forced tool_choice is rejected on Opus 5.5");
+		assert.equal(body.messages.at(-1)?.output_config?.effort, "low", "the turn should ask for low effort");
+		assert.ok(body.max_tokens > 1100, "thinking needs room above the answer cap");
+	}
+	console.log("Claude requests use low-effort thinking passed");
+}
+
 async function assertOpenRouterRequestsIdentifyOnhand() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -1046,7 +1083,11 @@ async function assertProviderApiKeyStorageAndRouting() {
 		},
 	});
 	assert.equal(settings.aiProvider, "anthropic");
-	assert.equal(settings.aiModel, "claude-sonnet-4-5-20250929");
+	assert.equal(settings.aiModel, "claude-opus-5-5", "Claude Sonnet 4.5 retires 2026-11-30, so a saved Sonnet 4.5 moves to the current default");
+	assert.ok(
+		settings.providerModels.anthropic.length > 0 && !settings.providerModels.anthropic.some((model) => model.id.startsWith("claude-sonnet-4-5")),
+		"the Anthropic picker should not offer the retiring Sonnet 4.5",
+	);
 	assert.equal(settings.advancedRuntimeInspectionEnabled, false);
 	assert.equal(settings.hasSelectedProviderApiKey, true);
 	assert.equal(settings.apiKeyProviders.find((provider) => provider.id === "anthropic").hasApiKey, true);
@@ -12191,7 +12232,7 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	// Other key providers use their cheapest current model, which must exist in
 	// the bundled catalog or every call would pay a failed request first.
 	for (const [aiProvider, aiModel, fast] of [
-		["anthropic", "claude-sonnet-4-5-20250929", "claude-haiku-5-5"],
+		["anthropic", "claude-opus-5-5", "claude-haiku-5-5"],
 		["google", "gemini-3.8-flash", "gemini-3.1-flash-lite"],
 		["openrouter", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4.1-flash"],
 	]) {
@@ -13368,6 +13409,7 @@ async function main() {
 	await assertDeletedSessionArtifactsAreRemovedWithoutDeletingSharedSources();
 	await assertProviderApiKeyStorageAndRouting();
 	await assertIntentClassifierSendsItsInstructions();
+	await assertClaudeRequestsUseLowEffortThinking();
 	await assertOpenRouterRequestsIdentifyOnhand();
 	await assertDecisionsIntentClassifier();
 	await assertChromeWebStoreTabGetsPlainContextNote();
