@@ -652,6 +652,23 @@ whatsNewEnabledInput.addEventListener("change", async () => {
 		reportError(error);
 	}
 });
+// The background adds or removes the right-click entry when this key changes.
+const CONTEXT_MENU_STORAGE_KEY = "onhandContextMenuEnabled";
+const contextMenuEnabledInput = document.getElementById("contextMenuEnabled");
+chrome.storage.local
+	.get({ [CONTEXT_MENU_STORAGE_KEY]: true })
+	.then((stored) => {
+		contextMenuEnabledInput.checked = stored[CONTEXT_MENU_STORAGE_KEY] !== false;
+	})
+	.catch(reportError);
+contextMenuEnabledInput.addEventListener("change", async () => {
+	try {
+		await chrome.storage.local.set({ [CONTEXT_MENU_STORAGE_KEY]: Boolean(contextMenuEnabledInput.checked) });
+		showToast("Saved");
+	} catch (error) {
+		reportError(error);
+	}
+});
 // Chrome lets Onhand read file:// pages only after the reader turns on file
 // access for it. Changing that restarts Onhand, which closes this page, so the
 // state is read once. Firefox can't grant it; its viewer asks for a local PDF.

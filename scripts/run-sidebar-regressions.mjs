@@ -3199,6 +3199,61 @@ async function assertFollowUpSuggestionIsCountedOnlyWhenSentUnchanged() {
 	}
 }
 
+// Right-click → "Explain with Onhand": the background opens the panel and
+// sends the selected text in a quick-open request; the panel asks about it
+// once, however many times the request is delivered.
+async function assertContextMenuRequestAsksAboutTheSelection() {
+	const submittedPrompts = (messages) => messages.filter((message) => message?.type === "sidebar:submit-prompt");
+	const selection = `Self-attention relates   different positions of a single sequence ${"in order to compute a representation ".repeat(4)}of the sequence.`;
+	const request = { id: "explain-1", windowId: 1, target: "composer", createdAt: Date.now(), ask: { text: selection } };
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await dom.dispatchRuntimeMessage({ type: "sidebar:quick-open", request });
+	await dom.dispatchRuntimeMessage({ type: "sidebar:quick-open", request });
+	await dom.window.chrome.storage.local.set({ onhandSidebarQuickOpenRequest: request });
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 50));
+	const submitted = submittedPrompts(runtimeMessages);
+	assert.equal(submitted.length, 1, "a request delivered three times asks once");
+	assert.match(submitted[0].prompt, /^Explain this: “Self-attention relates different positions of a single sequence in order/, "the question carries the selected text, whitespace collapsed");
+	assert.match(submitted[0].displayPrompt, /^Explain “Self-attention relates different positions/);
+	assert.ok(submitted[0].displayPrompt.length < 110 && submitted[0].displayPrompt.endsWith("…”"), "the conversation shows a short quote");
+	assert.equal(submitted[0].entry, "context-menu");
+	dom.window.close();
+
+	// A panel the click just opened waits for its state, so a reader who hasn't
+	// picked how Onhand runs gets the first-run choice instead of an error.
+	const firstRunMessages = [];
+	const firstRunState = { ...createState(), turns: [], messages: [], preferences: { extensionVersion: "test", runtimeRevision: "test" } };
+	const firstRun = await renderSidebar(firstRunState, firstRunMessages, { storage: { onhandSidebarQuickOpenRequest: { ...request, id: "explain-first-run" } } });
+	await new Promise((resolve) => firstRun.window.setTimeout(resolve, 150));
+	assert.equal(submittedPrompts(firstRunMessages).length, 0, "nothing is sent before a mode is picked");
+	assert.match(firstRun.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("input").value, /^Explain this: “Self-attention/);
+	firstRun.window.close();
+
+	// A reader who was typing a question keeps their words: the passage is
+	// added below them and nothing is sent.
+	const draftMessages = [];
+	const drafting = await renderSidebar(createState(), draftMessages);
+	await drafting.window.__onhandSidebarTestHooks.requestState();
+	const draftInput = drafting.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("input");
+	draftInput.value = "Is this the same as in chapter 2?";
+	await drafting.dispatchRuntimeMessage({ type: "sidebar:quick-open", request: { ...request, id: "explain-draft" } });
+	assert.equal(submittedPrompts(draftMessages).length, 0, "a draft is not sent for the reader");
+	assert.match(draftInput.value, /^Is this the same as in chapter 2\?\n“Self-attention relates different positions/);
+	drafting.window.close();
+
+	// Mid-answer, the question waits in the composer; it doesn't stop the answer.
+	const busyMessages = [];
+	const busy = await renderSidebar({ ...createState(), activeRequestId: "request-running" }, busyMessages);
+	await busy.window.__onhandSidebarTestHooks.requestState();
+	await busy.dispatchRuntimeMessage({ type: "sidebar:quick-open", request: { ...request, id: "explain-busy" } });
+	assert.equal(submittedPrompts(busyMessages).length, 0);
+	assert.equal(busyMessages.filter((message) => message?.type === "sidebar:stop").length, 0, "the running answer isn't stopped");
+	assert.match(busy.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("input").value, /^Explain this: “Self-attention/);
+	busy.window.close();
+}
+
 // The browser's answer to "may Onhand read file:// pages?".
 function fileAccessSetup(allowed) {
 	return (window) => {
@@ -3406,6 +3461,7 @@ await assertWhatsNewCoversManifestVersion();
 await assertFollowUpSuggestionFillsComposerOnTab();
 await assertFollowUpSuggestionIsCountedOnlyWhenSentUnchanged();
 await assertRatingPromptAsksOnceAfterThirdAnswer();
+await assertContextMenuRequestAsksAboutTheSelection();
 await assertStarterQuestionsFitThePageAndAsk();
 await assertLocalFileNoticeOffersPickAndAllow();
 await assertFirstAnswerTipShowsOnce();

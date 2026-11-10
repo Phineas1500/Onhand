@@ -37,6 +37,10 @@
 	const SIDEBAR_QUICK_OPEN_MAX_AGE_MS = 30 * 1000;
 	const SIDEBAR_QUICK_OPEN_FOCUS_DELAYS_MS = [0, 80, 240, 600, 1200];
 	const SIDEBAR_QUICK_OPEN_KEY_CAPTURE_MS = 15 * 1000;
+	// "Explain with Onhand" (right-click on selected text): how much of the
+	// selection goes into the question, and how much of it the conversation shows.
+	const CONTEXT_MENU_ASK_MAX_CHARS = 1500;
+	const CONTEXT_MENU_ASK_DISPLAY_CHARS = 90;
 	const REALTIME_MIC_DEVICE_STORAGE_KEY = "onhandRealtimeMicDeviceId";
 	const REALTIME_IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 	const REALTIME_API_KEY_SETUP_MESSAGE =
@@ -173,6 +177,9 @@
 	// ({ kind: "starter" | "followup" | "context-menu", text }). Sent with the
 	// question as a usage count; text the reader then edits counts as typed.
 	let composerEntry = null;
+	// The right-click "Explain with Onhand" request that was last asked, so its
+	// repeated deliveries (storage and runtime messages) ask once.
+	let lastHandledAskRequestId = "";
 	// In Firefox, Mozilla's install-time consent for technical data replaces
 	// Onhand's own switch (see diagnosticsSharingAllowed in browser-runtime.ts).
 	const IS_FIREFOX = typeof globalThis.browser?.runtime?.getBrowserInfo === "function";
@@ -5294,7 +5301,7 @@
 		const text = document.createElement("span");
 		text.className = "onhand-rating-text";
 		text.textContent =
-			"Onhand can also quiz you on a page (ask “Quiz me on this”), explain a passage you select first, and highlight PDFs in its own viewer.";
+			"Onhand can also quiz you on a page (ask “Quiz me on this”), explain a passage you select (right-click it and pick “Explain with Onhand”), and highlight PDFs in its own viewer.";
 		const dismiss = document.createElement("button");
 		dismiss.type = "button";
 		dismiss.textContent = "Got it";
@@ -8175,6 +8182,37 @@
 		input.dispatchEvent(new Event("input", { bubbles: true }));
 	}
 
+	// Right-click → "Explain with Onhand" opens the panel with the selected text
+	// in the request. The page keeps its selection, so the runtime reads it as
+	// for any question; the text rides in the question too, for readers (some
+	// PDF viewers) whose selection Onhand can't read back.
+	async function askFromQuickOpenRequest(request) {
+		const id = String(request?.id || "");
+		const text = String(request?.ask?.text || "").replace(/\s+/g, " ").trim();
+		if (!text || (id && id === lastHandledAskRequestId)) return;
+		lastHandledAskRequestId = id;
+		const clip = (value, maxLength) => (value.length > maxLength ? `${value.slice(0, maxLength).trimEnd()}…` : value);
+		// A reader who was typing a question keeps their words: the passage
+		// goes below them, for the reader to finish and send.
+		const draft = input.value.trim();
+		if (draft && !(composerEntry && composerEntry.text === draft)) {
+			input.value = `${draft}\n“${clip(text, CONTEXT_MENU_ASK_MAX_CHARS)}”`;
+			composerEntry = null;
+			input.dispatchEvent(new Event("input", { bubbles: true }));
+			return;
+		}
+		const prompt = `Explain this: “${clip(text, CONTEXT_MENU_ASK_MAX_CHARS)}”`;
+		input.value = prompt;
+		composerEntry = { kind: "context-menu", text: prompt, displayPrompt: `Explain “${clip(text, CONTEXT_MENU_ASK_DISPLAY_CHARS)}”` };
+		input.dispatchEvent(new Event("input", { bubbles: true }));
+		// A panel this click just opened hasn't loaded its state yet; asking
+		// before it knows how Onhand runs would skip the first-run choice.
+		if (!currentState) await requestState().catch(() => {});
+		// Mid-answer, the question waits in the composer for the reader to send.
+		if (currentState?.activeRequestId || sending) return;
+		submitComposerInput();
+	}
+
 	async function handleQuickOpenRequest(request) {
 		const windowId = await ensureCurrentWindowId();
 		if (!isQuickOpenRequestCurrent(request, windowId)) {
@@ -8183,6 +8221,7 @@
 		}
 		await clearQuickOpenRequest(request);
 		scheduleQuickAskComposerFocus();
+		if (request?.ask) await askFromQuickOpenRequest(request);
 	}
 
 	async function consumePendingQuickOpenRequest() {

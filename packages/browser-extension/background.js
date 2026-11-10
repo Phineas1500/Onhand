@@ -361,8 +361,8 @@ function createQuickOpenRequest(windowId) {
 	};
 }
 
-async function requestSidebarQuickOpen(windowId) {
-	const request = createQuickOpenRequest(windowId);
+async function requestSidebarQuickOpen(windowId, extra = {}) {
+	const request = { ...createQuickOpenRequest(windowId), ...extra };
 	await chrome.storage.local.set({ [SIDEBAR_QUICK_OPEN_REQUEST_KEY]: request });
 	for (const delayMs of SIDEBAR_QUICK_OPEN_RETRY_DELAYS_MS) {
 		setTimeout(() => {
@@ -15089,6 +15089,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 	if (changes[ONHAND_THEME_STORAGE_KEY]) {
 		syncAnnotationThemeInOpenTabs().catch((error) => log("Annotation theme sync after settings change failed", error));
 	}
+	if (changes[ONHAND_CONTEXT_MENU_STORAGE_KEY]) {
+		syncContextMenu().catch((error) => log("Could not update the right-click menu", error?.message || String(error)));
+	}
 });
 
 if (chrome.sidePanel?.onOpened?.addListener) {
@@ -16125,6 +16128,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 	void openWelcomePageAfterInstall(details).catch((error) => log("Could not open the welcome page", error?.message || String(error)));
 	void rememberVersionBeforeUpdate(details).catch((error) => log("Could not record the version before the update", error?.message || String(error)));
 	void updateUninstallUrl().catch((error) => log("Could not set the uninstall page", error?.message || String(error)));
+	void syncContextMenu().catch((error) => log("Could not set up the right-click menu", error?.message || String(error)));
 	const reason = details?.reason === "update" ? "extension_updated" : details?.reason === "install" ? "extension_installed" : "";
 	if (!reason) return;
 	getOnhandBrowserRuntime().trackEvent(reason, { result: "ok" }).catch(() => {});
@@ -16137,6 +16141,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 // startup catches a setup changed without a question since.
 chrome.runtime.onStartup?.addListener(() => {
 	void updateUninstallUrl().catch((error) => log("Could not set the uninstall page", error?.message || String(error)));
+	void syncContextMenu().catch((error) => log("Could not set up the right-click menu", error?.message || String(error)));
 });
 
 chrome.action.onClicked.addListener((tab) => {
@@ -16181,6 +16186,48 @@ chrome.runtime.onMessageExternal?.addListener((message, sender, sendResponse) =>
 		.then(() => requestSidebarQuickOpen(windowId))
 		.then(() => sendResponse({ ok: true }), (error) => sendResponse({ ok: false, error: error?.message || String(error) }));
 	return true;
+});
+
+// Right-clicking selected text offers "Explain with Onhand", so a reader who
+// is stuck on a passage doesn't have to remember the toolbar button. The click
+// opens the panel and hands it the selected text, and the panel asks about it
+// (sidebar.js, askFromQuickOpenRequest). Options can turn the entry off.
+const ONHAND_CONTEXT_MENU_ID = "onhand-explain-selection";
+const ONHAND_CONTEXT_MENU_STORAGE_KEY = "onhandContextMenuEnabled";
+const ONHAND_CONTEXT_MENU_MAX_CHARS = 4000;
+
+async function syncContextMenu() {
+	const menus = chrome.contextMenus;
+	if (!menus?.create) return false;
+	const stored = await chrome.storage.local.get({ [ONHAND_CONTEXT_MENU_STORAGE_KEY]: true });
+	await menus.removeAll();
+	if (stored[ONHAND_CONTEXT_MENU_STORAGE_KEY] === false) return false;
+	await new Promise((resolve) => {
+		menus.create({ id: ONHAND_CONTEXT_MENU_ID, title: "Explain with Onhand", contexts: ["selection"] }, () => {
+			// A second sync racing this one finds the entry already there.
+			void chrome.runtime.lastError;
+			resolve();
+		});
+	});
+	return true;
+}
+
+chrome.contextMenus?.onClicked?.addListener((info, tab) => {
+	if (info?.menuItemId !== ONHAND_CONTEXT_MENU_ID) return;
+	const text = String(info.selectionText || "").trim().slice(0, ONHAND_CONTEXT_MENU_MAX_CHARS);
+	if (!text) return;
+	// Browsers open the panel only while the click is being handled, so the
+	// open starts before anything is awaited. A click inside the panel itself
+	// has no tab, and the panel is already open.
+	const tabWindowId = typeof tab?.windowId === "number" ? tab.windowId : null;
+	const opened = tabWindowId === null ? Promise.resolve() : openSidebarForWindow(tabWindowId);
+	Promise.resolve(opened)
+		.catch((error) => log("Could not open Onhand from the right-click menu", error?.message || String(error)))
+		.then(async () => {
+			const windowId = tabWindowId ?? (await resolveSidebarWindowId({}));
+			if (typeof windowId === "number") await requestSidebarQuickOpen(windowId, { ask: { text } });
+		})
+		.catch((error) => log("Could not ask Onhand from the right-click menu", error?.message || String(error)));
 });
 
 chrome.windows.onRemoved.addListener(async (windowId) => {
