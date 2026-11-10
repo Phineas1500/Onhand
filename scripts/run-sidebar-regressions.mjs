@@ -3063,6 +3063,8 @@ function ratingSetup(installType, id = "ogjmncmkpgdkkcibdiacmagaehjohljb") {
 	return (window) => {
 		window.chrome.management = { getSelf: async () => ({ installType }) };
 		window.chrome.runtime.id = id;
+		// The prompt waits for a quiet moment after an answer; none here.
+		window.__onhandRatingPromptQuietMs = 0;
 	};
 }
 
@@ -3116,22 +3118,35 @@ async function assertFollowUpSuggestionFillsComposerOnTab() {
 	dom.window.close();
 }
 
+// A store install asks for a rating between questions. An ignored prompt
+// comes back a couple of times, "Not now" asks once more after ten more
+// answers, and the rating link or a second "Not now" ends it.
 async function assertRatingPromptAsksOnceAfterThirdAnswer() {
+	const ratingPrompt = (dom) => dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("ratingPrompt");
+	// Stored values are objects from the page's realm; compare them as plain data.
+	const storedRating = (dom) => JSON.parse(JSON.stringify(dom.getStorageValue("onhandRatingPrompt") ?? null));
+	const settle = async (dom) => {
+		for (let index = 0; index < 4; index += 1) await waitForSidebarTick(dom);
+	};
+	const answer = async (dom, count) => {
+		await dom.window.chrome.storage.local.set({ onhandAnsweredQuestions: count });
+		await settle(dom);
+	};
 	const state = createState();
-	const dom = await renderSidebar(state, [], { storage: { onhandAnsweredQuestions: 2 }, setupWindow: ratingSetup("normal") });
-	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	const runtimeMessages = [];
+	const dom = await renderSidebar(state, runtimeMessages, { storage: { onhandAnsweredQuestions: 2 }, setupWindow: ratingSetup("normal") });
 	await dom.window.__onhandSidebarTestHooks.requestState();
-	await waitForSidebarTick(dom);
-	const prompt = shadow.getElementById("ratingPrompt");
+	await settle(dom);
+	const prompt = ratingPrompt(dom);
 	assert.equal(prompt.hidden, true, "two answers are too few to ask");
-	await dom.window.chrome.storage.local.set({ onhandAnsweredQuestions: 3 });
-	await waitForSidebarTick(dom);
-	await waitForSidebarTick(dom);
+	await answer(dom, 3);
 	assert.equal(prompt.hidden, false, "the third answer asks");
 	assert.match(prompt.textContent, /A quick rating on the Chrome Web Store/);
 	assert.equal(prompt.querySelector("[data-rating-rate]").href, "https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb/reviews");
 	assert.equal(prompt.querySelector("[data-rating-rate]").target, "_blank");
-	assert.equal(dom.getStorageValue("onhandRatingPrompt"), "shown", "showing it records the ask");
+	assert.deepEqual(storedRating(dom), { state: "", shows: 1, askAgainAt: 0 }, "showing it is counted");
+	const featureEvents = () => runtimeMessages.filter((message) => message?.type === "browser-runtime:track-event" && message.eventName === "feature_used").map((message) => message.data.result);
+	assert.deepEqual(featureEvents(), ["rating_shown"]);
 
 	// Out of the way while a question runs.
 	state.activeRequestId = "request-running";
@@ -3143,34 +3158,69 @@ async function assertRatingPromptAsksOnceAfterThirdAnswer() {
 	await waitForSidebarTick(dom);
 	assert.equal(prompt.hidden, false, "back once the answer is in");
 
+	// "Not now" asks once more, ten answers later; a second "Not now" is final.
 	prompt.querySelector("[data-rating-dismiss]").click();
-	await waitForSidebarTick(dom);
+	await settle(dom);
 	assert.equal(prompt.hidden, true, "Not now closes it");
-	assert.equal(dom.getStorageValue("onhandRatingPrompt"), "dismissed");
-	await dom.window.chrome.storage.local.set({ onhandAnsweredQuestions: 4 });
-	await waitForSidebarTick(dom);
-	assert.equal(prompt.hidden, true, "it doesn't ask again");
+	assert.deepEqual(storedRating(dom), { state: "snoozed", shows: 1, askAgainAt: 13 });
+	await answer(dom, 12);
+	assert.equal(prompt.hidden, true, "it waits out the snooze");
+	await answer(dom, 13);
+	assert.equal(prompt.hidden, false, "ten answers later it asks again");
+	prompt.querySelector("[data-rating-dismiss]").click();
+	await settle(dom);
+	assert.equal(storedRating(dom).state, "declined");
+	await answer(dom, 40);
+	assert.equal(prompt.hidden, true, "a second Not now ends it");
+	assert.deepEqual(featureEvents(), ["rating_shown", "rating_snoozed", "rating_shown", "rating_snoozed"]);
 	dom.window.close();
 
+	// A reader who is already typing the next question isn't interrupted.
+	const typing = await renderSidebar(createState(), [], { storage: { onhandAnsweredQuestions: 2 }, setupWindow: ratingSetup("normal") });
+	await typing.window.__onhandSidebarTestHooks.requestState();
+	await settle(typing);
+	typing.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("input").value = "And what about";
+	await answer(typing, 3);
+	assert.equal(ratingPrompt(typing).hidden, true, "no prompt while the reader types");
+	typing.window.close();
+
+	// The rating link ends it.
+	const rater = await renderSidebar(createState(), [], { storage: { onhandAnsweredQuestions: 4 }, setupWindow: ratingSetup("normal") });
+	await rater.window.__onhandSidebarTestHooks.requestState();
+	await settle(rater);
+	assert.equal(ratingPrompt(rater).hidden, false, "an open panel asks a reader with enough answers");
+	const rateLink = ratingPrompt(rater).querySelector("[data-rating-rate]");
+	rateLink.addEventListener("click", (event) => event.preventDefault());
+	rateLink.click();
+	await settle(rater);
+	assert.equal(ratingPrompt(rater).hidden, true);
+	assert.equal(storedRating(rater).state, "rated");
+	rater.window.close();
+
 	const cases = [
-		["it already asked", { onhandAnsweredQuestions: 5, onhandRatingPrompt: "shown" }, "normal"],
-		["an unpacked build", { onhandAnsweredQuestions: 5 }, "development"],
+		["a prompt the reader ignored once", { onhandAnsweredQuestions: 5, onhandRatingPrompt: "shown" }, "normal", false],
+		["it was ignored three times", { onhandAnsweredQuestions: 5, onhandRatingPrompt: { state: "", shows: 3, askAgainAt: 0 } }, "normal", true],
+		["the reader rated", { onhandAnsweredQuestions: 5, onhandRatingPrompt: "rated" }, "normal", true],
+		["the reader declined twice", { onhandAnsweredQuestions: 50, onhandRatingPrompt: { state: "declined", shows: 2, askAgainAt: 13 } }, "normal", true],
+		["an earlier version's Not now", { onhandAnsweredQuestions: 5, onhandRatingPrompt: "dismissed" }, "normal", true],
+		["an unpacked build", { onhandAnsweredQuestions: 5 }, "development", true],
 	];
-	for (const [label, storage, installType] of cases) {
+	for (const [label, storage, installType, hidden] of cases) {
 		const quiet = await renderSidebar(createState(), [], { storage, setupWindow: ratingSetup(installType) });
 		await quiet.window.__onhandSidebarTestHooks.requestState();
-		await waitForSidebarTick(quiet);
-		await waitForSidebarTick(quiet);
-		assert.equal(quiet.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("ratingPrompt").hidden, true, `no rating prompt when ${label}`);
+		await settle(quiet);
+		assert.equal(ratingPrompt(quiet).hidden, hidden, `rating prompt ${hidden ? "stays hidden" : "shows"} when ${label}`);
+		if (label === "an earlier version's Not now") {
+			assert.deepEqual(storedRating(quiet), { state: "snoozed", shows: 1, askAgainAt: 15 }, "an old Not now becomes a snooze from here");
+		}
 		quiet.window.close();
 	}
 
 	// An Edge Add-ons install rates its own listing.
 	const edge = await renderSidebar(createState(), [], { storage: { onhandAnsweredQuestions: 3 }, setupWindow: ratingSetup("normal", "icbhigkjjhkcheejmdfkfhiljnkommoj") });
 	await edge.window.__onhandSidebarTestHooks.requestState();
-	await waitForSidebarTick(edge);
-	await waitForSidebarTick(edge);
-	const edgePrompt = edge.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("ratingPrompt");
+	await settle(edge);
+	const edgePrompt = ratingPrompt(edge);
 	assert.equal(edgePrompt.hidden, false);
 	assert.match(edgePrompt.textContent, /on Edge Add-ons/);
 	assert.equal(edgePrompt.querySelector("[data-rating-rate]").href, "https://microsoftedge.microsoft.com/addons/detail/icbhigkjjhkcheejmdfkfhiljnkommoj");

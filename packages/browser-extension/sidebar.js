@@ -19,10 +19,17 @@
 	const WHATS_NEW_OPT_OUT_STORAGE_KEY = "onhandWhatsNewOptOut";
 	const WHATS_NEW_MAX_ITEMS = 4;
 	// After a few answered questions (the background counts them), a store
-	// install asks once for a rating. The stored choice keeps it from asking again.
+	// install asks for a rating. It asks when the reader is between questions:
+	// as the panel opens, or once the latest answer has sat a while with nothing
+	// typed. A prompt the reader never clicked comes back a couple of times;
+	// "Not now" asks once more after more answers, and a second "Not now" or a
+	// click on the rating link ends it. Stored as { state, shows, askAgainAt }.
 	const ANSWERED_QUESTIONS_STORAGE_KEY = "onhandAnsweredQuestions";
 	const RATING_PROMPT_STORAGE_KEY = "onhandRatingPrompt";
 	const RATING_PROMPT_AFTER_ANSWERS = 3;
+	const RATING_PROMPT_SNOOZE_ANSWERS = 10;
+	const RATING_PROMPT_MAX_SHOWS = 3;
+	const RATING_PROMPT_QUIET_MS = Number(globalThis.__onhandRatingPromptQuietMs ?? 20 * 1000);
 	// The first answered question on this install brings one tip about what
 	// else Onhand does. The stored value keeps it from showing again.
 	const FIRST_ANSWER_TIP_STORAGE_KEY = "onhandFirstAnswerTip";
@@ -4304,6 +4311,8 @@
 				throw new Error(response?.error || "Could not create a new session.");
 			}
 			await Promise.all([requestState({ afterSessionChange: true }), requestSessions()]);
+			// Between conversations is a fair moment to ask for a rating.
+			void maybeShowRatingPrompt().catch(() => {});
 		} finally {
 			creatingSession = false;
 			renderState(currentState || {});
@@ -5134,23 +5143,68 @@
 		return { name: "the Chrome Web Store", url: "https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb/reviews" };
 	}
 
-	// Asks once: showing it records the ask, so a closed panel doesn't bring it back.
+	function normalizeRatingPromptState(value) {
+		if (value && typeof value === "object") {
+			return { state: String(value.state || ""), shows: Number(value.shows) || 0, askAgainAt: Number(value.askAgainAt) || 0 };
+		}
+		// Through 0.4.17 the value was one word and a single showing was final.
+		// A prompt that was only shown may come back; "Not now" then becomes the
+		// first snooze, counted from the answers so far (askAgainAt -1).
+		if (value === "rated") return { state: "rated", shows: 1, askAgainAt: 0 };
+		if (value === "dismissed") return { state: "snoozed", shows: 1, askAgainAt: -1 };
+		return { state: "", shows: value === "shown" ? 1 : 0, askAgainAt: 0 };
+	}
+
+	async function readRatingPromptState() {
+		const stored = await chrome.storage.local.get({ [ANSWERED_QUESTIONS_STORAGE_KEY]: 0, [RATING_PROMPT_STORAGE_KEY]: "" });
+		return { answered: Number(stored[ANSWERED_QUESTIONS_STORAGE_KEY]) || 0, rating: normalizeRatingPromptState(stored[RATING_PROMPT_STORAGE_KEY]) };
+	}
+
 	async function maybeShowRatingPrompt() {
 		if (ratingPromptVisible) return;
-		const stored = await chrome.storage.local.get({ [ANSWERED_QUESTIONS_STORAGE_KEY]: 0, [RATING_PROMPT_STORAGE_KEY]: "" });
-		if (stored[RATING_PROMPT_STORAGE_KEY] || (Number(stored[ANSWERED_QUESTIONS_STORAGE_KEY]) || 0) < RATING_PROMPT_AFTER_ANSWERS) return;
+		const { answered, rating } = await readRatingPromptState();
+		if (rating.state === "rated" || rating.state === "declined" || rating.shows >= RATING_PROMPT_MAX_SHOWS) return;
+		if (rating.state === "snoozed") {
+			if (rating.askAgainAt < 0) {
+				await chrome.storage.local.set({ [RATING_PROMPT_STORAGE_KEY]: { ...rating, askAgainAt: answered + RATING_PROMPT_SNOOZE_ANSWERS } });
+				return;
+			}
+			if (answered < rating.askAgainAt) return;
+		}
+		if (answered < RATING_PROMPT_AFTER_ANSWERS) return;
 		// Unpacked builds, including every test profile, have no listing to rate.
 		const self = await chrome.management?.getSelf?.();
 		if (!self || self.installType === "development" || ratingPromptVisible) return;
 		ratingPromptVisible = true;
-		await chrome.storage.local.set({ [RATING_PROMPT_STORAGE_KEY]: "shown" });
+		await chrome.storage.local.set({ [RATING_PROMPT_STORAGE_KEY]: { ...rating, shows: rating.shows + 1 } });
+		trackFeature("rating_shown");
 		renderRatingPrompt(currentState || {});
 	}
 
-	function closeRatingPrompt(choice) {
+	// A newly answered question starts the wait: the prompt appears only if the
+	// reader has neither asked again nor started typing by the end of it.
+	let ratingPromptQuietTimer = null;
+	function scheduleRatingPromptAfterAnswer() {
+		clearTimeout(ratingPromptQuietTimer);
+		ratingPromptQuietTimer = setTimeout(() => {
+			ratingPromptQuietTimer = null;
+			if (currentState?.activeRequestId || sending || liveVoice || realtimeConnected || input.value.trim()) return;
+			void maybeShowRatingPrompt().catch(() => {});
+		}, RATING_PROMPT_QUIET_MS);
+	}
+
+	async function closeRatingPrompt(choice) {
 		ratingPromptVisible = false;
 		renderRatingPrompt(currentState || {});
-		void chrome.storage.local.set({ [RATING_PROMPT_STORAGE_KEY]: choice }).catch(() => {});
+		trackFeature(choice === "rated" ? "rating_clicked" : "rating_snoozed");
+		const { answered, rating } = await readRatingPromptState();
+		const next =
+			choice === "rated"
+				? { ...rating, state: "rated" }
+				: rating.state === "snoozed"
+					? { ...rating, state: "declined" }
+					: { ...rating, state: "snoozed", askAgainAt: answered + RATING_PROMPT_SNOOZE_ANSWERS };
+		await chrome.storage.local.set({ [RATING_PROMPT_STORAGE_KEY]: next });
 	}
 
 	// The latest finished answer can carry the question the reader would likely
@@ -5193,12 +5247,12 @@
 		rate.rel = "noopener";
 		rate.textContent = "Rate Onhand";
 		rate.setAttribute("data-rating-rate", "");
-		rate.addEventListener("click", () => closeRatingPrompt("rated"));
+		rate.addEventListener("click", () => void closeRatingPrompt("rated").catch(() => {}));
 		const later = document.createElement("button");
 		later.type = "button";
 		later.textContent = "Not now";
 		later.setAttribute("data-rating-dismiss", "");
-		later.addEventListener("click", () => closeRatingPrompt("dismissed"));
+		later.addEventListener("click", () => void closeRatingPrompt("snoozed").catch(() => {}));
 		const actions = document.createElement("span");
 		actions.className = "onhand-rating-actions";
 		actions.append(rate, later);
@@ -8902,7 +8956,7 @@
 			const quickOpenRequest = changes[SIDEBAR_QUICK_OPEN_REQUEST_KEY]?.newValue;
 			if (quickOpenRequest) void handleQuickOpenRequest(quickOpenRequest);
 			if (changes[ANSWERED_QUESTIONS_STORAGE_KEY]) {
-				void maybeShowRatingPrompt().catch(() => {});
+				scheduleRatingPromptAfterAnswer();
 				void maybeShowFirstAnswerTip(changes[ANSWERED_QUESTIONS_STORAGE_KEY].newValue).catch(() => {});
 			}
 		});
