@@ -8,9 +8,17 @@
 // releases sees the newest few lines.
 globalThis.ONHAND_WHATS_NEW = Object.freeze([
 	{
+		version: "0.4.18",
+		items: [
+			"Select text on a page, right-click it and pick “Explain with Onhand” to ask about just that part.",
+			"Highlights land on more pages: course sites and web apps, pages in other languages, and PDFs where the quoted words differ slightly.",
+			"Copy or download a session's highlights, notes and answers from the ⋯ menu.",
+		],
+	},
+	{
 		version: "0.4.17",
 		items: [
-			"Highlights now land in tabs Chrome put to sleep and in PDFs the browser is still opening.",
+			"Highlights now land in tabs the browser put to sleep and in PDFs the browser is still opening.",
 			"When a page action keeps failing, Onhand stops retrying and answers with what it has.",
 			"Setup explains a rejected API key, or a country Onhand Free doesn't serve, before your first question.",
 		],
