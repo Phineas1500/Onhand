@@ -1,7 +1,7 @@
 // Builds the weekly Onhand Free digest from Analytics Engine usage rows.
 // Kept separate from index.mjs so Node tests can run it without the Workers
 // email module.
-import { summarizeRealInstalls, usageDevicesSql } from "../../../scripts/lib/free-tier-usage.mjs";
+import { featureUsageSql, findLikelyTestDevices, summarizeFeatureUse, summarizeRealInstalls, usageDevicesSql } from "../../../scripts/lib/free-tier-usage.mjs";
 
 const DAY_MS = 86_400_000;
 // Five weeks of history tells new installs from returning ones.
@@ -10,6 +10,40 @@ const MAX_LISTED = 25;
 
 export function digestSql(dataset) {
 	return usageDevicesSql({ dataset, days: LOOKBACK_DAYS });
+}
+
+export function featureDigestSql(dataset) {
+	return featureUsageSql({ dataset, days: 7 });
+}
+
+// What each feature_used name means (ONHAND_FEATURE_NAMES in browser-runtime.ts).
+const FEATURE_LABELS = {
+	ask_starter: "asked a starter question",
+	ask_followup: "sent the suggested follow-up",
+	ask_context_menu: "used right-click Explain",
+	ask_learning: "asked in Learning Mode",
+	ask_attachment: "asked with a file attached",
+	ask_selection: "asked about selected text",
+	ask_on_pdf: "asked on a PDF",
+	ask_on_doc: "asked on a Google Doc",
+	voice_started: "started voice",
+	learning_on: "turned Learning Mode on",
+	learning_off: "turned Learning Mode off",
+	answer_copied: "copied an answer",
+	mark_jumped: "jumped to a highlight",
+	notes_copied: "copied notes",
+	notes_downloaded: "downloaded notes",
+	rating_shown: "saw the rating prompt",
+	rating_clicked: "clicked Rate Onhand",
+	rating_snoozed: "clicked Not now on the rating prompt",
+};
+
+function featureLines(features) {
+	if (!features.length) return ["Features used: none recorded this week (Onhand 0.4.18 and later send these, from installs that share usage data).", ""];
+	const lines = ["Features used (installs, times):"];
+	for (const { feature, installs, uses } of features) lines.push(`- ${FEATURE_LABELS[feature] || feature}: ${installs} ${installs === 1 ? "install" : "installs"}, ${uses} ${uses === 1 ? "time" : "times"}`);
+	lines.push("");
+	return lines;
 }
 
 // Analytics Engine timestamps are UTC without a zone: "2026-10-18 07:55:14".
@@ -67,7 +101,7 @@ function feedbackLines(feedback) {
 	return lines;
 }
 
-export function buildDigest(rows, { now = new Date(), testDeviceHashes = [], feedback = [] } = {}) {
+export function buildDigest(rows, { now = new Date(), testDeviceHashes = [], feedback = [], featureRows = [] } = {}) {
 	const { installs, testInstalls, testAnswers } = summarizeRealInstalls(rows, testDeviceHashes);
 	const weekStart = now.getTime() - 7 * DAY_MS;
 	const day = (time) => new Date(time).toISOString().slice(0, 10);
@@ -100,6 +134,7 @@ export function buildDigest(rows, { now = new Date(), testDeviceHashes = [], fee
 		if (active.length > MAX_LISTED) lines.push(`  ...and ${active.length - MAX_LISTED} more`);
 		lines.push("");
 	}
+	lines.push(...featureLines(summarizeFeatureUse(featureRows, findLikelyTestDevices(rows, testDeviceHashes))));
 	lines.push(...feedbackLines(feedback));
 	lines.push(
 		`Left out as tests: ${testInstalls} installs, ${testAnswers} answers.`,

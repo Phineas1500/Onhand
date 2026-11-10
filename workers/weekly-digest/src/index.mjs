@@ -1,14 +1,14 @@
 // Weekly email digest of real Onhand Free usage (see docs/FREE_TIER_OPS.md).
 import { EmailMessage } from "cloudflare:email";
-import { buildDigest, digestSql } from "./digest.mjs";
+import { buildDigest, digestSql, featureDigestSql } from "./digest.mjs";
 
 const MAX_FEEDBACK = 50;
 
-async function queryUsage(env) {
+async function queryUsage(env, sql) {
 	const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/analytics_engine/sql`, {
 		method: "POST",
 		headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
-		body: digestSql(env.ANALYTICS_DATASET || "onhand_events"),
+		body: sql,
 	});
 	const text = await response.text();
 	if (!response.ok) throw new Error(`Analytics Engine SQL failed (${response.status}): ${text.replace(/\s+/g, " ").slice(0, 300)}`);
@@ -49,9 +49,15 @@ function mimeMessage({ from, to, subject, text }) {
 
 async function sendDigest(env) {
 	const now = new Date();
-	const [rows, feedback] = await Promise.all([queryUsage(env), listUninstallFeedback(env, new Date(now.getTime() - 7 * 86_400_000))]);
+	const dataset = env.ANALYTICS_DATASET || "onhand_events";
+	const [rows, featureRows, feedback] = await Promise.all([
+		queryUsage(env, digestSql(dataset)),
+		// The digest still goes out if this newer query fails.
+		queryUsage(env, featureDigestSql(dataset)).catch(() => []),
+		listUninstallFeedback(env, new Date(now.getTime() - 7 * 86_400_000)),
+	]);
 	const testDeviceHashes = String(env.TEST_DEVICE_HASHES || "").split(",").map((hash) => hash.trim()).filter(Boolean);
-	const { subject, text } = buildDigest(rows, { now, testDeviceHashes, feedback });
+	const { subject, text } = buildDigest(rows, { now, testDeviceHashes, feedback, featureRows });
 	await env.DIGEST_EMAIL.send(new EmailMessage(env.DIGEST_FROM, env.DIGEST_TO, mimeMessage({ from: env.DIGEST_FROM, to: env.DIGEST_TO, subject, text })));
 	return subject;
 }

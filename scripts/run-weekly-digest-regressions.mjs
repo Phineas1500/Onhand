@@ -42,4 +42,19 @@ assert.match(withFeedback, /Uninstall survey: 3 answers\nReasons: too slow 2, di
 assert.match(withFeedback, /- 2026-10-24 {2}too slow \(chrome, free, 1 question, 0\.4\.14, US\)\n/);
 assert.match(withFeedback, /- 2026-10-25 {2}didn't work on their page or PDF \(edge, none, 0 questions, 0\.4\.14, IN\): "my course site is blank"/);
 assert.match(withFeedback, /- 2026-10-25 {2}too slow\n/);
-console.log("Weekly digest: counts, ChromeOS split, install list, test exclusion and uninstall answers passed");
+assert.match(text, /Features used: none recorded this week/);
+
+// Feature use: installs and times per feature, most-used first, tests left out.
+const withFeatures = buildDigest(rows, {
+	now,
+	featureRows: [
+		{ feature: "ask_context_menu", device_hash: "ext-student", source: "extension", ai_model: "gpt-6-luna", uses: "3" },
+		{ feature: "ask_context_menu", device_hash: "ext-windows", source: "extension", ai_model: "gpt-6-luna", uses: "1" },
+		{ feature: "notes_copied", device_hash: "ext-student", source: "extension", ai_model: "gpt-6-luna", uses: "1" },
+		{ feature: "ask_starter", device_hash: "ext-test", source: "extension-cli", ai_model: "gpt-6-luna", uses: "9" },
+		{ feature: "voice_started", device_hash: "ext-test", source: "extension", ai_model: "gpt-6-luna", uses: "2" },
+	],
+}).text;
+assert.match(withFeatures, /Features used \(installs, times\):\n- used right-click Explain: 2 installs, 4 times\n- copied notes: 1 install, 1 time\n\n/);
+assert.doesNotMatch(withFeatures, /starter question|started voice/, "test devices are left out of feature use");
+console.log("Weekly digest: counts, ChromeOS split, install list, test exclusion, feature use and uninstall answers passed");

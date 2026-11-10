@@ -686,6 +686,26 @@ try {
 	console.log("Free-tier worker regressions: PASS (tool failure reasons)");
 }
 
+// A feature_used event names the feature in its result. Only an identifier
+// is written, so text sent there never reaches Analytics Engine.
+{
+	const f = fixture();
+	const send = (result) => worker.fetch(new Request("https://worker.test/v1/telemetry", {
+		method: "POST",
+		headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.9" },
+		body: JSON.stringify({ event_name: "feature_used", client_id: "feature-test-device", extension_version: "0.4.18", data: { source: "extension", result } }),
+	}), f.env, f.ctx);
+	assert.equal((await (await send("ask_context_menu")).json()).accepted, true);
+	for (const refused of ["", "Explain this sentence from the page", "ask-starter", "x".repeat(60)]) {
+		assert.equal((await (await send(refused)).json()).accepted, false, `refused feature name ${JSON.stringify(refused)}`);
+	}
+	await f.flush();
+	const events = f.events.filter((point) => point.indexes[0] === "feature_used");
+	assert.equal(events.length, 1);
+	assert.equal(events[0].blobs[2], "ask_context_menu");
+	console.log("Free-tier worker regressions: PASS (feature usage events)");
+}
+
 const { runAdmissionRegressions } = await import("../workers/free-tier/tests/admission-regressions.mjs");
 await runAdmissionRegressions({ fixture, handle, providerMock, providerResponse, completionPayload, worker, day, token });
 

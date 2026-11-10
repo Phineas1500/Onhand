@@ -563,6 +563,31 @@ const ONHAND_DIAGNOSTICS_EVENT_NAMES = new Set([
 	"browser_run_js_started",
 	"browser_run_js_succeeded",
 	"browser_run_js_failed",
+	"feature_used",
+]);
+// Which parts of Onhand get used. A feature_used event carries one of these
+// names as its result and nothing about the page or the question.
+const ONHAND_FEATURE_NAMES = new Set([
+	// How a question was asked, and on what.
+	"ask_starter",
+	"ask_followup",
+	"ask_context_menu",
+	"ask_learning",
+	"ask_attachment",
+	"ask_selection",
+	"ask_on_pdf",
+	"ask_on_doc",
+	"voice_started",
+	"learning_on",
+	"learning_off",
+	// What readers do with an answer.
+	"answer_copied",
+	"mark_jumped",
+	"notes_copied",
+	"notes_downloaded",
+	"rating_shown",
+	"rating_clicked",
+	"rating_snoozed",
 ]);
 const SUPPORTED_API_PROVIDERS: Record<
 	string,
@@ -8315,6 +8340,23 @@ function isLikelyPdfUrlForAutoHandoff(url: unknown) {
 	}
 }
 
+// The feature_used names for one question: how it was asked and what kind of
+// page it was asked on. Kinds only; the address itself is never sent.
+function askFeatureNames(input: { entry?: unknown; learningMode?: boolean; attachmentCount?: number; selectionText?: string; url?: unknown }) {
+	const names: string[] = [];
+	const entry = String(input.entry || "");
+	if (entry === "starter") names.push("ask_starter");
+	if (entry === "followup") names.push("ask_followup");
+	if (entry === "context-menu") names.push("ask_context_menu");
+	if (input.learningMode) names.push("ask_learning");
+	if (Number(input.attachmentCount) > 0) names.push("ask_attachment");
+	if (String(input.selectionText || "").trim()) names.push("ask_selection");
+	const url = String(input.url || "");
+	if (isOnhandPdfViewerUrl(url) || isLikelyPdfUrlForAutoHandoff(url) || /^file:.*\.pdf(?:[?#]|$)/i.test(url)) names.push("ask_on_pdf");
+	else if (isGoogleDocsDocumentUrlForContext(url)) names.push("ask_on_doc");
+	return names;
+}
+
 function shouldAutoOpenPdfViewerForTab(tab: any) {
 	if (typeof tab?.id !== "number") return false;
 	const url = String(tab?.url || "");
@@ -11845,6 +11887,7 @@ export const __browserRuntimeTest = {
 	deleteSessionRecordsForTest: deleteSessionRecords,
 	listBrowserArtifactsForTest: listBrowserArtifacts,
 	onhandPdfViewerSourceUrlForTest: onhandPdfViewerSourceUrl,
+	askFeatureNamesForTest: askFeatureNames,
 	isRestorablePageUrlForTest: isRestorablePageUrl,
 	onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
 	applyLearningBackgroundFocusDefaultForTest: applyLearningBackgroundFocusDefault,
@@ -14194,6 +14237,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	async function trackExtensionEvent(eventName: string, data: Record<string, unknown> = {}) {
 		const name = compactTelemetryValue(eventName, 80);
 		if (!ONHAND_DIAGNOSTICS_EVENT_NAMES.has(name)) return false;
+		if (name === "feature_used" && !ONHAND_FEATURE_NAMES.has(String(data.result || ""))) return false;
 		const store = await loadStore();
 		const settings = store.settings as RuntimeSettings;
 		if (!diagnosticsSharingAllowed(settings)) return false;
@@ -18453,6 +18497,15 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 						learningMode,
 					});
 					requestContext.abortController.signal.throwIfAborted();
+					for (const feature of askFeatureNames({
+						entry: request?.entry,
+						learningMode,
+						attachmentCount: attachments.length,
+						selectionText: getSelectionText(browserContextDetails.selection),
+						url: browserContextDetails.activeTab?.url,
+					})) {
+						void trackExtensionEvent("feature_used", { result: feature }).catch(() => {});
+					}
 					let pdfHandoff = await runExplicitPdfHandoffIfRequested(prompt, targetWindowId, preparationHost);
 					requestContext.abortController.signal.throwIfAborted();
 					if (!pdfHandoff && !selectionFirstPdfQuestion) {

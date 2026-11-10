@@ -15929,6 +15929,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				voiceContext: message.voiceContext,
 				attachments: Array.isArray(message.attachments) ? message.attachments : [],
 				source: typeof message.source === "string" ? message.source : "sidebar",
+				// How the question was asked (a starter, the suggested follow-up,
+				// the right-click menu); counted as a usage event, nothing else.
+				entry: typeof message.entry === "string" ? message.entry : "",
 				learningMode: Boolean(message.learningMode),
 				targetWindowId: typeof message.windowId === "number" ? message.windowId : undefined,
 			});

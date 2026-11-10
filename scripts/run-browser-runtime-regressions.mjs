@@ -5,6 +5,7 @@ import { runSessionPageActionRestoreRegressions } from "./lib/session-page-actio
 import { runPdfViewerTabRegressions } from "./lib/pdf-viewer-tab-regressions.mjs";
 import { runTabWakeRegressions } from "./lib/tab-wake-regressions.mjs";
 import { runWelcomeOpenRegressions } from "./lib/welcome-open-regressions.mjs";
+import { runFeatureUsageRegressions } from "./lib/feature-usage-regressions.mjs";
 import assert from "node:assert/strict";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
@@ -13451,6 +13452,7 @@ async function main() {
 	await runPdfViewerTabRegressions();
 	await runTabWakeRegressions();
 	await runWelcomeOpenRegressions();
+	await runFeatureUsageRegressions({ installChromeStorageStub, createReplayHost });
 	await assertPreparationCanBeStoppedWithoutLateContinuation();
 	await assertColdSubmissionAndSessionTransitionsAreExclusive();
 	await assertStorageFailuresDoNotWedgeRequests();

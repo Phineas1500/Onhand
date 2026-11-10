@@ -62,7 +62,12 @@ const TELEMETRY_EVENT_NAMES = new Set([
 	"browser_run_js_started",
 	"browser_run_js_succeeded",
 	"browser_run_js_failed",
+	"feature_used",
 ]);
+// A feature_used event names the feature in its result ("ask_starter",
+// "notes_copied"). Only an identifier passes, so free text sent there never
+// reaches Analytics Engine; the extension keeps the list of names.
+const TELEMETRY_FEATURE_NAME_PATTERN = /^[a-z][a-z0-9_]{1,39}$/;
 const ERROR_REPORT_TYPES = new Set(["prompt_error", "runtime_error", "voice_error", "options_error"]);
 
 const CORS_HEADERS = {
@@ -1089,8 +1094,9 @@ async function handleTelemetry(request, env, ctx) {
 	}
 	const eventName = compactString(payload?.event_name, 80);
 	if (!TELEMETRY_EVENT_NAMES.has(eventName)) return json(202, { ok: true, accepted: false });
-	const deviceHash = await hashIdentifier(payload?.client_id);
 	const data = telemetryData(payload);
+	if (eventName === "feature_used" && !TELEMETRY_FEATURE_NAME_PATTERN.test(data.result)) return json(202, { ok: true, accepted: false });
+	const deviceHash = await hashIdentifier(payload?.client_id);
 	writeAnalytics(ctx, env, eventName, {
 		...data,
 		deviceHash,

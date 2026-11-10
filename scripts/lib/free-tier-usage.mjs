@@ -44,6 +44,41 @@ GROUP BY device_hash, source, event, auth_mode, ai_provider, ai_model, turn_id, 
 ORDER BY device_hash, source, event`;
 }
 
+// Which Onhand features were used: one row per feature, device and source
+// (feature_used events, sent by Onhand 0.4.18 and later).
+export function featureUsageSql({ dataset, days }) {
+	return `
+SELECT
+  blob3 AS feature,
+  blob14 AS device_hash,
+  if(blob2 = '', 'unknown', blob2) AS source,
+  if(blob13 = '', 'unknown', blob13) AS ai_model,
+  SUM(_sample_interval) AS uses
+FROM ${dataset}
+WHERE timestamp >= NOW() - INTERVAL '${days}' DAY
+  AND blob1 = 'feature_used'
+  AND blob14 != ''
+GROUP BY feature, device_hash, source, ai_model
+ORDER BY feature`;
+}
+
+// Installs and uses per feature, most-used first, with test devices left out.
+export function summarizeFeatureUse(featureRows, testDevices = new Set()) {
+	const features = new Map();
+	for (const row of Array.isArray(featureRows) ? featureRows : []) {
+		const feature = String(row?.feature || "");
+		const hash = rowDeviceHash(row);
+		if (!feature || !hash || testDevices.has(hash) || isLikelyTestUsageRow(row)) continue;
+		const entry = features.get(feature) || { feature, devices: new Set(), uses: 0 };
+		entry.devices.add(hash);
+		entry.uses += Number(row.uses) || 0;
+		features.set(feature, entry);
+	}
+	return [...features.values()]
+		.map((entry) => ({ feature: entry.feature, installs: entry.devices.size, uses: entry.uses }))
+		.sort((a, b) => b.installs - a.installs || b.uses - a.uses || a.feature.localeCompare(b.feature));
+}
+
 export function rowSource(row) {
 	return String(row?.source || "unknown");
 }

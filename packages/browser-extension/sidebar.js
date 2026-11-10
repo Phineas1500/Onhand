@@ -169,6 +169,10 @@
 	// The local-file notice after its Allow access button opened the setting.
 	let localFileAccessRequested = false;
 	let followUpSuggestion = "";
+	// How the composer's current text got there when the reader didn't type it
+	// ({ kind: "starter" | "followup" | "context-menu", text }). Sent with the
+	// question as a usage count; text the reader then edits counts as typed.
+	let composerEntry = null;
 	// In Firefox, Mozilla's install-time consent for technical data replaces
 	// Onhand's own switch (see diagnosticsSharingAllowed in browser-runtime.ts).
 	const IS_FIREFOX = typeof globalThis.browser?.runtime?.getBrowserInfo === "function";
@@ -6278,6 +6282,7 @@
 			try {
 				await copyTextToClipboard(text);
 				setCopyButtonState(button, "copied");
+				trackFeature("answer_copied");
 			} catch {
 				setCopyButtonState(button, "failed");
 			}
@@ -6970,16 +6975,30 @@
 		renderState(response.state);
 	}
 
+	// Counts one use of a named Onhand feature (ONHAND_FEATURE_NAMES in
+	// browser-runtime.ts). Sent only when usage data is shared; never content.
+	function trackFeature(feature) {
+		try {
+			void chrome.runtime.sendMessage({ type: "browser-runtime:track-event", eventName: "feature_used", data: { result: feature } }).catch(() => {});
+		} catch {
+			// Counting is best-effort.
+		}
+	}
+
 	async function submitPrompt(prompt) {
 		if (sidebarConnectionError) return;
 		if (sending || creatingSession || sessionSwitching || deletingSession || restoringSession || (currentState?.activeRequestId && !liveVoice)) return;
 		const trimmedPrompt = String(prompt || "").trim();
 		if (!trimmedPrompt && !attachmentDrafts.length) return;
 		const attachments = attachmentDrafts.map((attachment) => ({ ...attachment }));
-		const displayPrompt = buildDisplayPrompt(trimmedPrompt, attachments);
+		// Text a starter, the follow-up suggestion or the right-click menu put in
+		// the composer keeps its origin (and the menu's shorter display wording)
+		// only while the reader leaves it as it was.
+		const entry = composerEntry && composerEntry.text === trimmedPrompt ? composerEntry : null;
+		const displayPrompt = buildDisplayPrompt(entry?.displayPrompt || trimmedPrompt, attachments);
 		if (liveVoice && realtimeConnected) {
 			liveVoice.text(trimmedPrompt || "Explain the attached material.", attachments);
-			input.value = ""; attachmentDrafts = []; renderAttachmentDrafts(); return;
+			input.value = ""; composerEntry = null; attachmentDrafts = []; renderAttachmentDrafts(); return;
 		}
 		// Without a first-run choice the turn would fail with a sign-in error.
 		// Keep the question and send it once the user picks how Onhand runs.
@@ -7006,12 +7025,14 @@
 				attachments,
 				learningMode,
 				source: "sidebar",
+				entry: entry?.kind || "",
 				windowId: await ensureCurrentWindowId(),
 			});
 			if (!response?.ok) {
 				throw new Error(response?.error || "Could not submit prompt.");
 			}
 			input.value = "";
+			composerEntry = null;
 			attachmentDrafts = [];
 			await Promise.all([requestState(), requestSessions()]);
 		} finally {
@@ -7031,6 +7052,7 @@
 		if (!response?.ok) {
 			throw new Error(response?.error || "Could not activate that Onhand link.");
 		}
+		trackFeature("mark_jumped");
 	}
 
 	async function scrollToAnnotation(annotationId, tabId = null, target = "annotation") {
@@ -7047,6 +7069,7 @@
 		if (!response?.ok) {
 			throw new Error(response?.error || "Could not scroll to that annotation.");
 		}
+		trackFeature("mark_jumped");
 	}
 
 	function dedupePageActions(actions) {
@@ -7778,6 +7801,7 @@
 		if (currentState?.preferences && !currentState.preferences.hasAiApiKey) throw new Error(realtimeKeySetupMessage());
 		if (!globalThis.OnhandLiveVoice) throw new Error("Reload Onhand to load GPT-Live support.");
 		realtimeConnecting = true; realtimeError = "";
+		trackFeature("voice_started");
 		setRealtimeStatus("Connecting GPT-Live...");
 		const sessionPath = getStateSessionPath(currentState);
 		await loadLiveTranscript(sessionPath);
@@ -8371,6 +8395,7 @@
 			} catch {}
 		});
 		const nextValue = Boolean(learningModeToggle.checked);
+		trackFeature(nextValue ? "learning_on" : "learning_off");
 		void updateLearningMode(nextValue).catch((error) => {
 			learningModeToggle.checked = !nextValue;
 			learningModeLabel.classList.toggle("on", !nextValue);
@@ -8651,6 +8676,7 @@
 		if (event.key === "Tab" && followUpSuggestion && !input.value && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing) {
 			event.preventDefault();
 			input.value = followUpSuggestion;
+			composerEntry = { kind: "followup", text: followUpSuggestion.trim() };
 			input.setSelectionRange(input.value.length, input.value.length);
 			input.dispatchEvent(new Event("input", { bubbles: true }));
 			return;
@@ -8682,6 +8708,7 @@
 		if (!(starter instanceof HTMLElement) || currentState?.activeRequestId || sending) return;
 		// Asks like a typed question, so it waits for a first-run choice the same way.
 		input.value = starter.dataset.starterPrompt || "";
+		composerEntry = { kind: "starter", text: input.value.trim() };
 		submitComposerInput();
 	});
 

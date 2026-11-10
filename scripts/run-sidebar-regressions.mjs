@@ -3177,6 +3177,28 @@ async function assertRatingPromptAsksOnceAfterThirdAnswer() {
 	edge.window.close();
 }
 
+// A suggestion sent as it was offered is counted as a follow-up; one the
+// reader rewrites first counts as typed.
+async function assertFollowUpSuggestionIsCountedOnlyWhenSentUnchanged() {
+	for (const [edit, expectedEntry] of [["", "followup"], [" in practice?", ""]]) {
+		const state = createState();
+		state.turns.at(-1).suggestedFollowUp = "Why do proposals get rejected so often?";
+		const runtimeMessages = [];
+		const dom = await renderSidebar(state, runtimeMessages);
+		await dom.window.__onhandSidebarTestHooks.requestState();
+		await waitForSidebarTick(dom);
+		const input = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("input");
+		input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+		input.value += edit;
+		input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+		await waitForSidebarTick(dom);
+		const submitted = runtimeMessages.filter((message) => message?.type === "sidebar:submit-prompt");
+		assert.equal(submitted.length, 1);
+		assert.equal(submitted[0].entry, expectedEntry, edit ? "an edited suggestion counts as typed" : "an unchanged suggestion counts as a follow-up");
+		dom.window.close();
+	}
+}
+
 // The browser's answer to "may Onhand read file:// pages?".
 function fileAccessSetup(allowed) {
 	return (window) => {
@@ -3224,6 +3246,7 @@ async function assertStarterQuestionsFitThePageAndAsk() {
 	const submitted = runtimeMessages.filter((message) => message?.type === "sidebar:submit-prompt");
 	assert.equal(submitted.length, 1, "one click asks");
 	assert.equal(submitted[0].prompt, "What's the main idea here?");
+	assert.equal(submitted[0].entry, "starter", "the question is counted as a starter");
 	dom.window.close();
 
 	// Before the first-run choice, the question waits in the composer like a typed one.
@@ -3381,6 +3404,7 @@ await assertWhatsNewStaysHiddenWithoutNews();
 await assertWhatsNewClearsOnFirstQuestion();
 await assertWhatsNewCoversManifestVersion();
 await assertFollowUpSuggestionFillsComposerOnTab();
+await assertFollowUpSuggestionIsCountedOnlyWhenSentUnchanged();
 await assertRatingPromptAsksOnceAfterThirdAnswer();
 await assertStarterQuestionsFitThePageAndAsk();
 await assertLocalFileNoticeOffersPickAndAllow();
