@@ -132,6 +132,13 @@ marker, triggers a copy of the user's selection, then writes the user's
 original clipboard contents back. This is needed for editors such as
 Google Docs where the selected text is not exposed in the page DOM.
 
+`contextMenus`
+
+Used to add one "Explain with Onhand" entry to the right-click menu when
+the user has selected text. Clicking it opens the side panel and asks
+about the selected passage. The entry can be turned off in Onhand's
+options.
+
 Host permissions: `http://*/*`, `https://*/*`, `http://localhost/*`,
 `http://127.0.0.1/*`, `file:///*`
 
