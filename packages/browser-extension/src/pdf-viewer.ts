@@ -189,6 +189,14 @@ function normalizeSearchChar(char: string) {
 		.toLowerCase();
 }
 
+// What a search compares: letters, their marks and digits, in any script.
+// Punctuation is not compared. This once kept every non-ASCII character, so
+// a PDF's curly quotes and long dashes had to be typed exactly: a quote with
+// a plain " or - where the page has “ or – matched nothing.
+function isSearchableChar(char: string) {
+	return /[\p{L}\p{M}\p{N}]/u.test(char);
+}
+
 function nextAnnotationId() {
 	annotationSequence += 1;
 	return `onhand-pdf-${Date.now().toString(36)}-${annotationSequence.toString(36)}`;
@@ -521,8 +529,7 @@ function buildNormalizedTextMap(root: Element) {
 			for (const char of normalized) {
 				text += char;
 				positions.push({ node, offset });
-				const isSearchable = /[a-z0-9]/i.test(char) || /[^\x00-\x7F]/.test(char);
-				if (isSearchable) {
+				if (isSearchableChar(char)) {
 					if (pendingSearchSpace) {
 						searchText += " ";
 						searchPositions.push(pendingSearchSpace);
@@ -560,7 +567,7 @@ function buildSearchText(value: string, keepSpaces: boolean) {
 			}
 			continue;
 		}
-		if (!/[a-z0-9]/i.test(normalized) && !/[^\x00-\x7F]/.test(normalized)) {
+		if (![...normalized].some((part) => isSearchableChar(part))) {
 			if (keepSpaces && text && !lastWasSpace) {
 				text += " ";
 				lastWasSpace = true;
@@ -671,9 +678,83 @@ function rangeFromMapPositions(positions: Array<{ node: Text; offset: number }>,
 	return range;
 }
 
-function findMappedTextRange(root: Element, query: string, occurrence = 1, context?: AnchorContext) {
+// Most of a quote's words, in order, within one stretch of the page: where a
+// quote lands when it left a word out, changed one, or dropped a "[12]" the
+// PDF has mid-sentence. The stretch comes back as offsets into searchText,
+// with the share of the quote's words it holds. A short quote must have all
+// its words there (extra page words between them are fine); a longer one may
+// miss one in five.
+function findFuzzyTokenRange(searchText: string, queryText: string) {
+	const queryTokens = queryText.split(" ").filter((token) => token.length >= 2);
+	if (queryTokens.length < 5) return null;
+	const pageTokens: Array<{ token: string; start: number; end: number }> = [];
+	for (const match of searchText.matchAll(/\S+/g)) {
+		pageTokens.push({ token: match[0], start: match.index || 0, end: (match.index || 0) + match[0].length });
+	}
+	const minimumScore = queryTokens.length < 8 ? 0.85 : 0.8;
+	const windowSize = queryTokens.length + Math.max(4, Math.ceil(queryTokens.length * 0.3));
+	const leadTokens = new Set(queryTokens.slice(0, 3));
+	let best: { start: number; end: number; score: number; spanTokens: number } | null = null;
+	for (let startIndex = 0; startIndex < pageTokens.length; startIndex += 1) {
+		if (!leadTokens.has(pageTokens[startIndex].token)) continue;
+		const windowTokens = pageTokens.slice(startIndex, startIndex + windowSize);
+		const rows = queryTokens.length;
+		const columns = windowTokens.length;
+		// Longest run of the quote's words that appear, in order, in the window.
+		const table = Array.from({ length: rows + 1 }, () => new Uint16Array(columns + 1));
+		for (let row = 1; row <= rows; row += 1) {
+			for (let column = 1; column <= columns; column += 1) {
+				table[row][column] =
+					queryTokens[row - 1] === windowTokens[column - 1].token
+						? table[row - 1][column - 1] + 1
+						: Math.max(table[row - 1][column], table[row][column - 1]);
+			}
+		}
+		const shared = table[rows][columns];
+		const score = shared / queryTokens.length;
+		if (shared < 4 || score < minimumScore) continue;
+		let row = rows;
+		let column = columns;
+		let first = -1;
+		let last = -1;
+		while (row > 0 && column > 0) {
+			if (queryTokens[row - 1] === windowTokens[column - 1].token && table[row][column] === table[row - 1][column - 1] + 1) {
+				if (last < 0) last = column - 1;
+				first = column - 1;
+				row -= 1;
+				column -= 1;
+			} else if (table[row - 1][column] >= table[row][column - 1]) {
+				row -= 1;
+			} else {
+				column -= 1;
+			}
+		}
+		if (first < 0 || last < 0) continue;
+		const spanTokens = last - first + 1;
+		if (!best || score > best.score || (score === best.score && spanTokens < best.spanTokens)) {
+			best = { start: windowTokens[first].start, end: windowTokens[last].end, score, spanTokens };
+		}
+	}
+	return best;
+}
+
+function findMappedTextRange(root: Element, query: string, occurrence = 1, context?: AnchorContext, options: { fuzzy?: boolean } = {}) {
 	const map = buildNormalizedTextMap(root);
 	const queryText = normalizeSearchText(query);
+	// The near-match pass runs on its own, after every page's exact passes
+	// found nothing, so a near match here never wins over an exact one elsewhere.
+	if (options.fuzzy) {
+		const fuzzy = findFuzzyTokenRange(map.searchText, queryText);
+		const range = fuzzy ? rangeFromMapPositions(map.searchPositions, fuzzy.start, fuzzy.end - 1) : null;
+		if (!fuzzy || !range) return null;
+		return {
+			range,
+			matchedText: normalizeText(rangeTextWithPdfBoundarySpaces(range)) || normalizeText(query),
+			fallback: "approximate",
+			context: extractNormalizedContext(map.searchText, fuzzy.start, fuzzy.end - fuzzy.start),
+			score: fuzzy.score,
+		};
+	}
 	// Context is always compared in compact (alphanumeric) space so punctuation
 	// and spacing differences between the stored anchor and the live page text
 	// never break re-finding.
@@ -703,7 +784,7 @@ function findMappedTextRange(root: Element, query: string, occurrence = 1, conte
 	let compactText = "";
 	for (let index = 0; index < map.text.length; index += 1) {
 		const char = map.text[index];
-		if (!char || char === " " || !/[a-z0-9]|[^\x00-\x7F]/i.test(char)) continue;
+		if (!char || char === " " || !isSearchableChar(char)) continue;
 		compactText += char;
 		compactPositions.push(index);
 	}
@@ -1133,10 +1214,10 @@ async function pdfHighlightText(query: string, options: Record<string, any> = {}
 	const targetPageNumber = pdfAnchorPageNumber(options.pdfAnchor);
 	if (targetPageNumber) await ensurePageRendered(targetPageNumber);
 
-	async function applyHighlightToPage(page: HTMLElement) {
+	async function applyHighlightToPage(page: HTMLElement, nearMatch: ReturnType<typeof findMappedTextRange> = null) {
 		const textLayer = page.querySelector<HTMLElement>(".textLayer");
 		if (!textLayer) return null;
-		const match = findMappedTextRange(textLayer, rawQuery, occurrence, options.pdfAnchor?.textQuote);
+		const match = nearMatch || findMappedTextRange(textLayer, rawQuery, occurrence, options.pdfAnchor?.textQuote);
 		if (!match) return null;
 		const rects = rangeRectsForPage(match.range, page);
 		if (!rects.length) return null;
@@ -1212,10 +1293,64 @@ async function pdfHighlightText(query: string, options: Record<string, any> = {}
 			};
 		}
 	}
+	// No page holds the quote word for word. Unless the caller wants only
+	// that, take the page where most of its words run in order (a word left
+	// out, a citation number the quote dropped), rendered or not.
+	if (occurrence === 1 && options.exactOnly !== true && options.allowApproximate !== false) {
+		const nearMatch = await findNearPdfTextMatch(rawQuery, pages.map(({ page }) => page));
+		if (nearMatch) {
+			const result = await applyHighlightToPage(nearMatch.page, nearMatch.match);
+			if (result) return result;
+		}
+	}
 	if (failedPageNumbers.length) {
 		throw new Error(`PDF text search is incomplete: could not read pages ${failedPageNumbers.join(", ")}. No readable text matched: ${rawQuery}`);
 	}
 	throw new Error(`No visible text matched: ${rawQuery}`);
+}
+
+// The page whose text comes closest to a quote, with the match on it. Pages
+// that have rendered are compared by their text layer; one that hasn't is
+// compared by its PDF.js text first and rendered only if it wins.
+async function findNearPdfTextMatch(rawQuery: string, pages: HTMLElement[]) {
+	const queryText = normalizeSearchText(rawQuery);
+	// A long PDF has hundreds of pages that haven't rendered. Comparing each
+	// in full took over four seconds on a 640-page book, past what a highlight
+	// may take. A page is compared only if it holds two of the quote's
+	// longest words, and the scan of unrendered pages stops after a second.
+	const longestWords = [...new Set(queryText.split(" ").filter((token) => token.length >= 5))].sort((a, b) => b.length - a.length).slice(0, 4);
+	const wordsNeeded = Math.min(2, longestWords.length);
+	const pendingScanDeadline = Date.now() + 1000;
+	let best: { page: HTMLElement; pageNumber: number | null; score: number; match: ReturnType<typeof findMappedTextRange> } | null = null;
+	for (const page of pages) {
+		const pageNumber = getPageNumber(page);
+		if (isPendingPage(page)) {
+			if (!pageNumber || Date.now() > pendingScanDeadline) continue;
+			let text = "";
+			try {
+				text = await getPageTextContent(pageNumber);
+			} catch {
+				continue;
+			}
+			const lowerText = text.toLowerCase();
+			if (longestWords.filter((word) => lowerText.includes(word)).length < wordsNeeded) continue;
+			const pending = findFuzzyTokenRange(normalizeSearchText(text), queryText);
+			if (pending && (!best || pending.score > best.score)) best = { page, pageNumber, score: pending.score, match: null };
+			continue;
+		}
+		const textLayer = page.querySelector<HTMLElement>(".textLayer");
+		const match = textLayer ? findMappedTextRange(textLayer, rawQuery, 1, null, { fuzzy: true }) : null;
+		if (match && (!best || (match.score || 0) > best.score)) best = { page, pageNumber, score: match.score || 0, match };
+	}
+	if (!best) return null;
+	if (!best.match && best.pageNumber) {
+		await ensurePageRendered(best.pageNumber);
+		const renderedPage = getPdfPageByNumber(best.pageNumber);
+		const textLayer = renderedPage?.querySelector<HTMLElement>(".textLayer");
+		const match = textLayer ? findMappedTextRange(textLayer, rawQuery, 1, null, { fuzzy: true }) : null;
+		return renderedPage && match ? { page: renderedPage, match } : null;
+	}
+	return best.match ? { page: best.page, match: best.match } : null;
 }
 
 function findAnnotation(annotationId: string) {
@@ -3343,6 +3478,9 @@ async function renderRemainingPages(sequence: number) {
 async function findPendingPageWithText(query: string, failedPageNumbers: number[] = []) {
 	const normalizedQuery = normalizeText(query).toLowerCase();
 	const compactQuery = compactPendingSearchText(query);
+	// Letters and digits only, as the rendered text layer is searched, so a
+	// quote with other punctuation finds its page here too.
+	const lettersQuery = compactSearchText(query);
 	if (!normalizedQuery) return null;
 	for (const pageElement of getPdfPages()) {
 		if (!isPendingPage(pageElement)) continue;
@@ -3356,6 +3494,7 @@ async function findPendingPageWithText(query: string, failedPageNumbers: number[
 			continue;
 		}
 		if (text.includes(normalizedQuery) || compactPendingSearchText(text).includes(compactQuery)) return pageNumber;
+		if (lettersQuery.length >= 8 && compactSearchText(text).includes(lettersQuery)) return pageNumber;
 	}
 	return null;
 }

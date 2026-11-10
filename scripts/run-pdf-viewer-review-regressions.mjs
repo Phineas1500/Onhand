@@ -192,7 +192,10 @@ async function assertCitationAndHighlightSearchSurvivePageFailures() {
 		getPdfPages: () => pages,
 		isPendingPage: () => true, getPageNumber: (page) => page.pageNumber,
 	};
-	const viewer = loadFunctions(["normalizeText", "compactPendingSearchText", "pdfFindCitation", "findPendingPageWithText"], dependencies);
+	const viewer = loadFunctions(
+		["normalizeText", "compactPendingSearchText", "isSearchableChar", "normalizeSearchChar", "buildSearchText", "normalizeSearchText", "compactSearchText", "findFuzzyTokenRange", "pdfFindCitation", "findPendingPageWithText"],
+		dependencies,
+	);
 	const citation = await viewer.pdfFindCitation({ reference: "14" });
 	assert.equal(citation.found, true, "an unreadable unrelated last page must not hide a healthy bibliography entry");
 	assert.equal(citation.pageNumber, 2);
@@ -211,7 +214,7 @@ async function assertCitationAndHighlightSearchSurvivePageFailures() {
 	assert.equal(await viewer.findPendingPageWithText("Target passage", failedPageNumbers), 3,
 		"a failed pending page must not hide a matching later page");
 	assert.deepEqual(failedPageNumbers, [2]);
-	const highlightViewer = loadFunctions(["pdfHighlightText"], {
+	const highlightViewer = loadFunctions(["pdfHighlightText", "findNearPdfTextMatch"], {
 		...dependencies, ...viewer, normalizePdfRegionRect: () => null, pdfAnchorPageNumber: () => null,
 		visibleEnough: () => false, window: { innerHeight: 600 },
 	});
@@ -219,6 +222,66 @@ async function assertCitationAndHighlightSearchSurvivePageFailures() {
 		"a pending-page miss must preserve the extraction failure instead of claiming a complete no-match");
 	failures.clear();
 	await assert.rejects(highlightViewer.pdfHighlightText("Absent passage"), /No visible text matched/);
+}
+
+// A PDF's curly quotes and long dashes used to be compared as typed, so a
+// quote with a plain " or - matched nothing; and with no near match at all, a
+// quote that left out one word (or the "[12]" the PDF has mid-sentence) could
+// not be marked. Punctuation no longer counts, and a near match lands when
+// every page's exact passes found nothing.
+async function assertPdfQuotesMatchDespitePunctuationAndMissingWords() {
+	const dom = new JSDOM(`<body>
+		<section class="page" data-page-number="1"><div class="textLayer">
+			<span>Charlie Munger – The Architect of Berkshire Hathaway.</span>
+			<span>He said “invest in wonderful businesses” and never looked back at the earlier mistakes.</span>
+		</div></section>
+		<section class="page" data-page-number="2"><div class="textLayer">
+			<span>Recurrent models [12] typically factor computation along the symbol positions of the input and output sequences.</span>
+		</div></section>
+	</body>`);
+	const { window } = dom;
+	const pages = [...window.document.querySelectorAll(".page")];
+	const names = [
+		"normalizeText", "isSearchableChar", "normalizeSearchChar", "pdfTextNodeBoundaryNeedsSpace", "rangeTextWithPdfBoundarySpaces", "buildNormalizedTextMap",
+		"buildSearchText", "normalizeSearchText", "compactSearchText", "collectMatchIndices", "commonSuffixLength", "commonPrefixLength", "scoreContextAt",
+		"pickMatchIndex", "extractNormalizedContext", "rangeFromMapPositions", "findFuzzyTokenRange", "findMappedTextRange", "findNearPdfTextMatch",
+	];
+	const viewer = loadFunctions(names, {
+		document: window.document, Node: window.Node, NodeFilter: window.NodeFilter, window,
+		ANCHOR_CONTEXT_LENGTH: 80, MIN_CONTEXT_SCORE: 6,
+		getPageNumber: (page) => Number(page.getAttribute("data-page-number")),
+		isPendingPage: () => false,
+		getPageTextContent: async () => "",
+		ensurePageRendered: async () => {},
+		getPdfPageByNumber: (pageNumber) => pages[pageNumber - 1],
+	});
+	const [first, second] = pages.map((page) => page.querySelector(".textLayer"));
+
+	const plainQuotes = viewer.findMappedTextRange(first, 'He said "invest in wonderful businesses" and never looked back');
+	assert.equal(plainQuotes?.fallback, undefined, "plain quotes for curly ones is an exact match");
+	assert.match(plainQuotes.matchedText, /^He said “invest in wonderful businesses” and never looked back$/);
+	assert.ok(viewer.findMappedTextRange(first, "Charlie Munger - The Architect of Berkshire Hathaway"), "a hyphen for an en dash matches");
+
+	const withoutCitation = "Recurrent models typically factor computation along the symbol positions of the input and output sequences.";
+	assert.equal(viewer.findMappedTextRange(second, withoutCitation), null, "the exact passes don't skip the citation number");
+	const near = viewer.findMappedTextRange(second, withoutCitation, 1, null, { fuzzy: true });
+	assert.equal(near?.fallback, "approximate");
+	assert.match(near.matchedText, /^Recurrent models \[12\] typically factor .* output sequences$/, "the near match covers the sentence, citation number included");
+	assert.ok(
+		viewer.findMappedTextRange(second, "Recurrent models [12] typically factor computation along the symbol positions of the input sequences", 1, null, { fuzzy: true }),
+		"a longer quote can leave a word out",
+	);
+	assert.equal(viewer.findMappedTextRange(second, "Recurrent models [12] usually factor computation", 1, null, { fuzzy: true }), null, "a short quote must have all its words");
+	assert.equal(
+		viewer.findMappedTextRange(second, "Convolutional networks rarely factor images along the spatial dimensions of each layer", 1, null, { fuzzy: true }),
+		null,
+		"a sentence that only shares a few words is not a match",
+	);
+
+	const found = await viewer.findNearPdfTextMatch(withoutCitation, pages);
+	assert.equal(found?.page, pages[1], "the near match is taken from the page that holds the sentence");
+	assert.equal(await viewer.findNearPdfTextMatch("Convolutional networks rarely factor images along the spatial dimensions of each layer", pages), null);
+	dom.window.close();
 }
 
 function assertFirstAnnotationCreatedDuringTransientZoom() {
@@ -434,6 +497,7 @@ await assertExtractionCoverage();
 await assertZoomPreservesLiveEdits(0);
 await assertZoomPreservesLiveEdits(1);
 await assertCitationAndHighlightSearchSurvivePageFailures();
+await assertPdfQuotesMatchDespitePunctuationAndMissingWords();
 assertFirstAnnotationCreatedDuringTransientZoom();
 await assertPdfScrollRestoresInsideViewerWithPausedFrames();
 await assertGenericScrollSettlesWithPausedFrames();

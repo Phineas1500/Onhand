@@ -22,7 +22,11 @@
 //
 // Usage:
 //   node scripts/run-pdf-toolkit-sweep.mjs [--pdf <id>]... [--list]
-//     [--max-sentences 5] [--budget-ms 4000] [--keep-browser]
+//     [--max-sentences 5] [--budget-ms 4000] [--keep-browser] [--perturb]
+//   --perturb also highlights each PDF's first sentences the way a model
+//   tends to retype them: typographic quotes and dashes typed plainly, other
+//   punctuation, the end cut off with "…", a word left out. A mark that lands
+//   anywhere but its own sentence counts as a failure.
 //   Browser: ONHAND_TEST_BROWSER=/path/to/chromium (defaults to Helium).
 //   SKIPS (exit 0) when no browser binary is found.
 import { spawn } from "node:child_process";
@@ -64,7 +68,7 @@ const SWEEP_PDFS = [
 ];
 
 function parseArgs(argv) {
-	const args = { pdfIds: [], list: false, maxSentences: 5, budgetMs: 4000, keepBrowser: false };
+	const args = { pdfIds: [], list: false, maxSentences: 5, budgetMs: 4000, keepBrowser: false, perturb: false };
 	for (let index = 2; index < argv.length; index += 1) {
 		const value = argv[index];
 		const readValue = (flag) => (value.includes("=") ? value.slice(flag.length + 1) : argv[(index += 1)]);
@@ -79,6 +83,7 @@ function parseArgs(argv) {
 		else if (value === "--max-sentences" || value.startsWith("--max-sentences=")) args.maxSentences = readNumber("--max-sentences");
 		else if (value === "--budget-ms" || value.startsWith("--budget-ms=")) args.budgetMs = readNumber("--budget-ms");
 		else if (value === "--keep-browser") args.keepBrowser = true;
+		else if (value === "--perturb") args.perturb = true;
 		else throw new Error(`Unknown argument: ${value}`);
 	}
 	return args;
@@ -316,6 +321,32 @@ function sampleSentences(pageTexts, maxSentences) {
 	return Array.from(picks).slice(0, maxSentences);
 }
 
+// The ways a model's quote commonly differs from the PDF's exact characters.
+function perturbSentence(sentence) {
+	const variants = [];
+	// Typographic characters typed on a plain keyboard.
+	const plain = sentence.replace(/[“”„]/g, '"').replace(/[‘’]/g, "'").replace(/[–—−]/g, "-").replace(/…/g, "...").replace(/ﬁ/g, "fi").replace(/ﬂ/g, "fl");
+	if (plain !== sentence) variants.push({ type: "plain", text: plain });
+	const retyped = sentence.replace(/(?<![\p{L}\p{N}])[\p{P}]+|[\p{P}]+(?![\p{L}\p{N}])/gu, " ").replace(/\s+/g, " ").trim();
+	if (retyped !== sentence && retyped.length >= 20) variants.push({ type: "retyped", text: retyped });
+	const words = sentence.split(/\s+/);
+	if (words.length >= 8) variants.push({ type: "trimmed", text: `${words.slice(0, -2).join(" ")}…` });
+	if (words.length >= 10) variants.push({ type: "dropped", text: words.filter((_, index) => index !== Math.floor(words.length / 2)).join(" ") });
+	return variants;
+}
+
+function lettersOnly(value) {
+	return String(value || "").normalize("NFKD").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function landedOnSource(matchedText, source) {
+	const matched = lettersOnly(matchedText);
+	const original = lettersOnly(source);
+	if (!matched || !original) return false;
+	const probe = Math.min(16, matched.length, original.length);
+	return original.includes(matched.slice(0, probe)) || matched.includes(original.slice(0, probe)) || original.includes(matched.slice(-probe));
+}
+
 function sampleSearchPhrase(pageTexts) {
 	// A distinctive mid-document phrase: 4 consecutive words, mostly lowercase letters.
 	for (const { text } of pageTexts.slice().reverse()) {
@@ -375,6 +406,26 @@ async function sweepPdf(ctx, pdf, options) {
 			result.spans.push({ ...span, ...outcome, ms: Date.now() - startedAt });
 		}
 
+		// Perturbed copies go one at a time on a page cleared of earlier marks.
+		const perturbed = options.perturb
+			? spans.slice(0, 3).flatMap((span) => perturbSentence(span.text).map((variant) => ({ ...variant, source: span.text })))
+			: [];
+		for (const span of perturbed) {
+			await ctx.tool("browser_clear_annotations", {}).catch(() => {});
+			const startedAt = Date.now();
+			let outcome;
+			try {
+				const highlighted = await ctx.tool("browser_highlight_text", { text: span.text, scrollIntoView: false });
+				const annotation = highlighted?.annotation || {};
+				outcome = landedOnSource(annotation.matchedText, span.source)
+					? { ok: true, kind: annotation.kind || null, approximate: Boolean(annotation.approximate), fallback: annotation.fallback || null }
+					: { ok: false, error: `Landed elsewhere: ${JSON.stringify(String(annotation.matchedText || "").slice(0, 80))}` };
+			} catch (error) {
+				outcome = { ok: false, error: String(error?.message || error).slice(0, 200) };
+			}
+			result.spans.push({ ...span, ...outcome, ms: Date.now() - startedAt });
+		}
+
 		const phrase = sampleSearchPhrase(pageTexts);
 		if (phrase) {
 			try {
@@ -397,7 +448,7 @@ async function sweepPdf(ctx, pdf, options) {
 }
 
 function formatSpan(span) {
-	return `${span.type}:"${span.text.slice(0, 60)}${span.text.length > 60 ? "…" : ""}"`;
+	return `${span.type}:"${span.text.slice(0, 90)}${span.text.length > 90 ? "…" : ""}"`;
 }
 
 async function main() {

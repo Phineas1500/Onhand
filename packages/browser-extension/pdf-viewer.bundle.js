@@ -25192,6 +25192,9 @@ function normalizeSearchChar(char) {
   if (/\s/.test(char)) return " ";
   return char.normalize("NFKC").replace(/[’`´]/g, "'").toLowerCase();
 }
+function isSearchableChar(char) {
+  return /[\p{L}\p{M}\p{N}]/u.test(char);
+}
 function nextAnnotationId() {
   annotationSequence += 1;
   return `onhand-pdf-${Date.now().toString(36)}-${annotationSequence.toString(36)}`;
@@ -25458,8 +25461,7 @@ function buildNormalizedTextMap(root) {
       for (const char of normalized) {
         text += char;
         positions.push({ node, offset });
-        const isSearchable = /[a-z0-9]/i.test(char) || /[^\x00-\x7F]/.test(char);
-        if (isSearchable) {
+        if (isSearchableChar(char)) {
           if (pendingSearchSpace) {
             searchText += " ";
             searchPositions.push(pendingSearchSpace);
@@ -25494,7 +25496,7 @@ function buildSearchText(value, keepSpaces) {
       }
       continue;
     }
-    if (!/[a-z0-9]/i.test(normalized) && !/[^\x00-\x7F]/.test(normalized)) {
+    if (![...normalized].some((part) => isSearchableChar(part))) {
       if (keepSpaces && text && !lastWasSpace) {
         text += " ";
         lastWasSpace = true;
@@ -25577,9 +25579,70 @@ function rangeFromMapPositions(positions, startIndex, endIndexInclusive) {
   range.setEnd(end.node, end.offset + 1);
   return range;
 }
-function findMappedTextRange(root, query, occurrence = 1, context) {
+function findFuzzyTokenRange(searchText, queryText) {
+  const queryTokens = queryText.split(" ").filter((token) => token.length >= 2);
+  if (queryTokens.length < 5) return null;
+  const pageTokens = [];
+  for (const match of searchText.matchAll(/\S+/g)) {
+    pageTokens.push({ token: match[0], start: match.index || 0, end: (match.index || 0) + match[0].length });
+  }
+  const minimumScore = queryTokens.length < 8 ? 0.85 : 0.8;
+  const windowSize = queryTokens.length + Math.max(4, Math.ceil(queryTokens.length * 0.3));
+  const leadTokens = new Set(queryTokens.slice(0, 3));
+  let best = null;
+  for (let startIndex = 0; startIndex < pageTokens.length; startIndex += 1) {
+    if (!leadTokens.has(pageTokens[startIndex].token)) continue;
+    const windowTokens = pageTokens.slice(startIndex, startIndex + windowSize);
+    const rows = queryTokens.length;
+    const columns = windowTokens.length;
+    const table = Array.from({ length: rows + 1 }, () => new Uint16Array(columns + 1));
+    for (let row2 = 1; row2 <= rows; row2 += 1) {
+      for (let column2 = 1; column2 <= columns; column2 += 1) {
+        table[row2][column2] = queryTokens[row2 - 1] === windowTokens[column2 - 1].token ? table[row2 - 1][column2 - 1] + 1 : Math.max(table[row2 - 1][column2], table[row2][column2 - 1]);
+      }
+    }
+    const shared = table[rows][columns];
+    const score = shared / queryTokens.length;
+    if (shared < 4 || score < minimumScore) continue;
+    let row = rows;
+    let column = columns;
+    let first = -1;
+    let last = -1;
+    while (row > 0 && column > 0) {
+      if (queryTokens[row - 1] === windowTokens[column - 1].token && table[row][column] === table[row - 1][column - 1] + 1) {
+        if (last < 0) last = column - 1;
+        first = column - 1;
+        row -= 1;
+        column -= 1;
+      } else if (table[row - 1][column] >= table[row][column - 1]) {
+        row -= 1;
+      } else {
+        column -= 1;
+      }
+    }
+    if (first < 0 || last < 0) continue;
+    const spanTokens = last - first + 1;
+    if (!best || score > best.score || score === best.score && spanTokens < best.spanTokens) {
+      best = { start: windowTokens[first].start, end: windowTokens[last].end, score, spanTokens };
+    }
+  }
+  return best;
+}
+function findMappedTextRange(root, query, occurrence = 1, context, options = {}) {
   const map = buildNormalizedTextMap(root);
   const queryText = normalizeSearchText(query);
+  if (options.fuzzy) {
+    const fuzzy = findFuzzyTokenRange(map.searchText, queryText);
+    const range = fuzzy ? rangeFromMapPositions(map.searchPositions, fuzzy.start, fuzzy.end - 1) : null;
+    if (!fuzzy || !range) return null;
+    return {
+      range,
+      matchedText: normalizeText(rangeTextWithPdfBoundarySpaces(range)) || normalizeText(query),
+      fallback: "approximate",
+      context: extractNormalizedContext(map.searchText, fuzzy.start, fuzzy.end - fuzzy.start),
+      score: fuzzy.score
+    };
+  }
   const compactPrefix = context?.prefix ? compactSearchText(context.prefix) : "";
   const compactSuffix = context?.suffix ? compactSearchText(context.suffix) : "";
   const exactIndices = collectMatchIndices(map.searchText, queryText);
@@ -25599,7 +25662,7 @@ function findMappedTextRange(root, query, occurrence = 1, context) {
   let compactText = "";
   for (let index = 0; index < map.text.length; index += 1) {
     const char = map.text[index];
-    if (!char || char === " " || !/[a-z0-9]|[^\x00-\x7F]/i.test(char)) continue;
+    if (!char || char === " " || !isSearchableChar(char)) continue;
     compactText += char;
     compactPositions.push(index);
   }
@@ -25980,10 +26043,10 @@ async function pdfHighlightText(query, options = {}) {
   if (regionRect) return await pdfHighlightRegion(rawQuery, regionRect, options);
   const targetPageNumber = pdfAnchorPageNumber(options.pdfAnchor);
   if (targetPageNumber) await ensurePageRendered(targetPageNumber);
-  async function applyHighlightToPage(page) {
+  async function applyHighlightToPage(page, nearMatch = null) {
     const textLayer = page.querySelector(".textLayer");
     if (!textLayer) return null;
-    const match = findMappedTextRange(textLayer, rawQuery, occurrence, options.pdfAnchor?.textQuote);
+    const match = nearMatch || findMappedTextRange(textLayer, rawQuery, occurrence, options.pdfAnchor?.textQuote);
     if (!match) return null;
     const rects = rangeRectsForPage(match.range, page);
     if (!rects.length) return null;
@@ -26051,10 +26114,53 @@ async function pdfHighlightText(query, options = {}) {
       };
     }
   }
+  if (occurrence === 1 && options.exactOnly !== true && options.allowApproximate !== false) {
+    const nearMatch = await findNearPdfTextMatch(rawQuery, pages.map(({ page }) => page));
+    if (nearMatch) {
+      const result = await applyHighlightToPage(nearMatch.page, nearMatch.match);
+      if (result) return result;
+    }
+  }
   if (failedPageNumbers.length) {
     throw new Error(`PDF text search is incomplete: could not read pages ${failedPageNumbers.join(", ")}. No readable text matched: ${rawQuery}`);
   }
   throw new Error(`No visible text matched: ${rawQuery}`);
+}
+async function findNearPdfTextMatch(rawQuery, pages) {
+  const queryText = normalizeSearchText(rawQuery);
+  const longestWords = [...new Set(queryText.split(" ").filter((token) => token.length >= 5))].sort((a, b) => b.length - a.length).slice(0, 4);
+  const wordsNeeded = Math.min(2, longestWords.length);
+  const pendingScanDeadline = Date.now() + 1e3;
+  let best = null;
+  for (const page of pages) {
+    const pageNumber = getPageNumber(page);
+    if (isPendingPage(page)) {
+      if (!pageNumber || Date.now() > pendingScanDeadline) continue;
+      let text = "";
+      try {
+        text = await getPageTextContent(pageNumber);
+      } catch {
+        continue;
+      }
+      const lowerText = text.toLowerCase();
+      if (longestWords.filter((word) => lowerText.includes(word)).length < wordsNeeded) continue;
+      const pending = findFuzzyTokenRange(normalizeSearchText(text), queryText);
+      if (pending && (!best || pending.score > best.score)) best = { page, pageNumber, score: pending.score, match: null };
+      continue;
+    }
+    const textLayer = page.querySelector(".textLayer");
+    const match = textLayer ? findMappedTextRange(textLayer, rawQuery, 1, null, { fuzzy: true }) : null;
+    if (match && (!best || (match.score || 0) > best.score)) best = { page, pageNumber, score: match.score || 0, match };
+  }
+  if (!best) return null;
+  if (!best.match && best.pageNumber) {
+    await ensurePageRendered(best.pageNumber);
+    const renderedPage = getPdfPageByNumber(best.pageNumber);
+    const textLayer = renderedPage?.querySelector(".textLayer");
+    const match = textLayer ? findMappedTextRange(textLayer, rawQuery, 1, null, { fuzzy: true }) : null;
+    return renderedPage && match ? { page: renderedPage, match } : null;
+  }
+  return best.match ? { page: best.page, match: best.match } : null;
 }
 function findAnnotation(annotationId) {
   const escaped = CSS.escape(annotationId);
@@ -27901,6 +28007,7 @@ async function renderRemainingPages(sequence) {
 async function findPendingPageWithText(query, failedPageNumbers = []) {
   const normalizedQuery = normalizeText(query).toLowerCase();
   const compactQuery = compactPendingSearchText(query);
+  const lettersQuery = compactSearchText(query);
   if (!normalizedQuery) return null;
   for (const pageElement of getPdfPages()) {
     if (!isPendingPage(pageElement)) continue;
@@ -27914,6 +28021,7 @@ async function findPendingPageWithText(query, failedPageNumbers = []) {
       continue;
     }
     if (text.includes(normalizedQuery) || compactPendingSearchText(text).includes(compactQuery)) return pageNumber;
+    if (lettersQuery.length >= 8 && compactSearchText(text).includes(lettersQuery)) return pageNumber;
   }
   return null;
 }

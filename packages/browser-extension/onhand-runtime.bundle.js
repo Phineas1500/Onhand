@@ -88790,9 +88790,13 @@ function stripShortLeadingHighlightLabel(value) {
   const text = normalizeHighlightRetryCandidate(value);
   const match2 = text.match(/^([^:\n]{2,70}):\s+(.{16,})$/u);
   if (!match2) return text;
-  const labelWords = match2[1].match(/[A-Za-z][A-Za-z]{2,}/g) || [];
+  const labelWords = match2[1].match(new RegExp("\\p{L}{3,}", "gu")) || [];
   if (labelWords.length > 6) return text;
   return match2[2].trim();
+}
+var UNSPACED_SCRIPT_LETTER_PATTERN = /[\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Thai}]/gu;
+function unspacedScriptLetterCount(value) {
+  return (String(value || "").match(UNSPACED_SCRIPT_LETTER_PATTERN) || []).length;
 }
 function cleanMarkdownHeadingHighlightText(value) {
   const text = normalizeHighlightRetryCandidate(value);
@@ -88923,6 +88927,8 @@ function isFormulaOnlyHighlightText(value) {
   return Boolean(text) && (text.match(/[A-Za-z]{3,}/g) || []).length < 3 && /[=∫∑∏√^_\\]|[⁰-⁹₀-₉]/u.test(text);
 }
 var FORMULA_HIGHLIGHT_MISS_MESSAGE = "No visible text matched that formula: rendered math rarely reads back as the same text. Highlight the sentence that introduces or names the formula instead.";
+var HIDDEN_HIGHLIGHT_TEXT_PATTERN = /on the page but hidden/i;
+var HIDDEN_HIGHLIGHT_MISS_MESSAGE = "That passage is on the page but hidden (in a collapsed or inactive section), so it cannot be highlighted. Do not ask for it again: highlight a passage that is showing instead, or make the point without a mark.";
 function buildHighlightRetryCandidates(value) {
   const raw = String(value || "").trim();
   if (!raw) return [];
@@ -88933,9 +88939,10 @@ function buildHighlightRetryCandidates(value) {
   const candidates = [];
   const addCandidate = (candidate) => {
     const normalized = normalizeHighlightRetryCandidate(candidate);
-    if (normalized.length < 16 || normalized.length > HIGHLIGHT_RETRY_MAX_CHARS) return;
-    const wordTokens = normalized.match(/[A-Za-z][A-Za-z]{2,}/g) || [];
-    if (wordTokens.length < 3) return;
+    const unspacedLetters = unspacedScriptLetterCount(normalized);
+    if (normalized.length < (unspacedLetters >= 8 ? 8 : 16) || normalized.length > HIGHLIGHT_RETRY_MAX_CHARS) return;
+    const wordTokens = normalized.match(new RegExp("\\p{L}{3,}", "gu")) || [];
+    if (wordTokens.length < 3 && unspacedLetters < 8) return;
     if (normalized.toLowerCase() === normalizeHighlightRetryCandidate(raw).toLowerCase()) return;
     if (!candidates.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) candidates.push(normalized);
   };
@@ -88952,7 +88959,7 @@ function buildHighlightRetryCandidates(value) {
   for (const part of raw.split(/(?:^|\n)\s*(?:[-*•]|\d+[.)])\s+/u)) addCandidateVariants(part);
   if (!hasListShape || !hasMultipleLines) {
     const normalizedRaw = normalizeHighlightRetryCandidate(raw);
-    const parts = normalizedRaw.split(/(?<=[!?;:])\s+|(?<!r\.v\.)(?<!e\.g\.)(?<!i\.e\.)(?<=[.])\s+|\s+[–—-]\s+/iu).map((part) => part.trim()).filter(Boolean);
+    const parts = normalizedRaw.split(/(?<=[!?;:])\s+|(?<!r\.v\.)(?<!e\.g\.)(?<!i\.e\.)(?<=[.])\s+|\s+[–—-]\s+|(?<=[。！？；])\s*|(?<=[؟۔।])\s+/iu).map((part) => part.trim()).filter(Boolean);
     for (const part of parts) {
       addCandidateVariants(part);
       const clausePattern = hasFormulaNoise ? /\s+(?:which|where|because|but|then|so)\s+/i : /\s+(?:which|where|because|but|then|so|from|using|via|through|between|with)\s+/i;
@@ -89169,11 +89176,20 @@ function buildRepeatedToolFailureAnswerNowGuardResult(toolName2, commandName, re
     }
   };
 }
-function classifyToolFailureTrace(trace) {
+function classifyToolFailureTrace(trace, context = {}) {
   const text = String(trace?.error || trace?.resultSummary || "").toLowerCase();
   if (isGuardrailBlockedTrace(trace) || text.startsWith("guardrail blocked")) return "guard";
   if (/timed? ?out|timeout|took too long/.test(text)) return "timeout";
-  if (/no (visible )?text matched|not found on (the )?page|could not (find|locate)|no match/.test(text)) return "no_match";
+  if (/on the page but hidden/.test(text)) return "hidden";
+  if (/no (visible )?(pdf |readable )?text matched|not found on (the )?page|could not (find|locate)|no match/.test(text)) {
+    if (trace?.toolName !== "browser_highlight_text") return "no_match";
+    if (/matched that formula/.test(text)) return "formula";
+    const base = /closest text only shares part/.test(text) ? "weak" : "no_match";
+    const quote = String(trace?.args?.text || trace?.effectiveArgs?.text || "");
+    const pdf = context.pdf || Boolean(trace?.args?.pdfAnchor || trace?.effectiveArgs?.pdfAnchor) || /\bpdf\b/.test(text.split(":")[0]);
+    const nonLatin = (quote.match(/[^\P{L}\p{Script=Latin}]/gu) || []).length > (quote.match(new RegExp("\\p{Script=Latin}", "gu")) || []).length;
+    return `${base}${pdf ? "_pdf" : ""}${nonLatin ? "_nl" : ""}`;
+  }
   if (/no tab with id|tab (was )?closed|tab not found|invalid tab/.test(text)) return "tab";
   if (/receiving end does not exist|could not establish connection|frame (was )?removed|context invalidated|no frame/.test(text)) return "unreachable";
   if (/cannot access|cannot be scripted|chrome:\/\/|chrome-extension:\/\/|restricted|permission|not allowed/.test(text)) return "restricted";
@@ -89183,11 +89199,11 @@ function classifyToolFailureTrace(trace) {
   return "other";
 }
 var TOOL_FAILURE_REASONS_MAX_CHARS = 160;
-function summarizeToolFailureReasons(traces = []) {
+function summarizeToolFailureReasons(traces = [], context = {}) {
   const counts = /* @__PURE__ */ new Map();
   for (const trace of traces) {
     if (trace?.state !== "error" || !trace.toolName) continue;
-    const key = `${String(trace.toolName).replace(/^browser_/, "")}:${classifyToolFailureTrace(trace)}`;
+    const key = `${String(trace.toolName).replace(/^browser_/, "")}:${classifyToolFailureTrace(trace, context)}`;
     counts.set(key, (counts.get(key) || 0) + 1);
   }
   let summary = "";
@@ -91647,7 +91663,7 @@ var GENERIC_ENTITY_STOPWORDS = /* @__PURE__ */ new Set([
   "with"
 ]);
 function normalizeEntityText(value) {
-  return String(value || "").toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\s+/g, " ").trim();
+  return String(value || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^\p{L}\p{M}\p{N}]+/gu, " ").replace(/\s+/g, " ").trim();
 }
 function entityWords(value) {
   return normalizeEntityText(value).split(/\s+/).map((word) => word.trim()).filter((word) => word.length >= 3 && !GENERIC_ENTITY_STOPWORDS.has(word));
@@ -95531,6 +95547,8 @@ function looksLikeWeakCompactTeachingHighlightText(value, request2) {
   const title = normalizeEntityText(request2?.initialActiveTab?.title || "");
   if (title && normalized === title) return true;
   const words = entityWords(text);
+  const endsLikeSentence = /[.!?。！？؟۔।]["”'’»」)]?$/.test(text);
+  if (endsLikeSentence && (words.length >= 5 || unspacedScriptLetterCount(text) >= 12)) return false;
   const hasVerb = /\b(?:is|are|means|shows|uses|treats|samples?|draws?|converts?|provides?|returns?|takes?|allows?|works?|captures?|represents?|defines?|explains?)\b/i.test(text);
   if (words.length <= 10 && !hasVerb && /[:|&–—-]/.test(text)) return true;
   return false;
@@ -95891,7 +95909,7 @@ function recentReadableTraceBlocks(request2) {
 function splitReadablePhraseCandidates(value) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   if (!text) return [];
-  const sentenceCandidates = text.split(/(?<=[.!?])\s*(?:\[\d{1,3}\]\s*)?\s+(?=[A-Z0-9"“])|(?<=[.!?]\s*\[\d{1,3}\])\s+(?=[A-Z0-9"“])|(?<=[.!?])\s+(?=[∗†‡§¶*]\s*[A-Z])/).map((candidate) => candidate.trim()).filter(Boolean);
+  const sentenceCandidates = text.split(/(?<=[.!?])\s*(?:\[\d{1,3}\]\s*)?\s+(?=[\p{Lu}\p{Lo}\p{N}"“«„「])|(?<=[.!?]\s*\[\d{1,3}\])\s+(?=[\p{Lu}\p{Lo}\p{N}"“«„「])|(?<=[.!?])\s+(?=[∗†‡§¶*]\s*[\p{Lu}\p{Lo}])|(?<=[。！？])\s*(?=\S)|(?<=[؟۔।])\s+/u).map((candidate) => candidate.trim()).filter(Boolean);
   const seeds = sentenceCandidates.length ? sentenceCandidates : [text];
   const candidates = [];
   const addCandidate = (candidate) => {
@@ -96007,7 +96025,7 @@ function stripDisplayMathDelimiters(value) {
 }
 function looksLikeCompleteSentence(value) {
   const text = String(value || "").trim();
-  return /^["“'‘(]?[A-Z0-9]/.test(text) && /[.!?]["”'’)]?$/.test(text) && highlightRetryWordCount(text) >= 5;
+  return /^["“'‘«„「(]?[\p{Lu}\p{Lo}\p{N}]/u.test(text) && /[.!?。！？؟۔।]["”'’»」)]?$/.test(text) && (highlightRetryWordCount(text) >= 5 || unspacedScriptLetterCount(text) >= 10);
 }
 function shouldKeepExactHighlightPhrase(value) {
   const text = normalizeHighlightRetryCandidate(value);
@@ -96447,6 +96465,10 @@ var __browserRuntimeTest = {
   finalizePublicActivitiesForTest: finalizePublicActivities,
   queueBlankReplyRetryForTest: queueBlankReplyRetry,
   summarizeToolReliabilityForTest: summarizeToolReliability,
+  buildHighlightRetryCandidatesForTest: buildHighlightRetryCandidates,
+  looksLikeWeakCompactTeachingHighlightTextForTest: looksLikeWeakCompactTeachingHighlightText,
+  looksLikeCompleteSentenceForTest: looksLikeCompleteSentence,
+  splitReadablePhraseCandidatesForTest: splitReadablePhraseCandidates,
   getSelectionText,
   getSelectionPageNumber,
   inferPdfPageNumberFromBrowserContextDetails,
@@ -96915,6 +96937,9 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
           if (commandName !== "highlight_text") throw error2;
           if (isFormulaOnlyHighlightText(params?.text) && /No visible text matched/i.test(String(error2?.message || error2))) {
             throw new Error(FORMULA_HIGHLIGHT_MISS_MESSAGE);
+          }
+          if (HIDDEN_HIGHLIGHT_TEXT_PATTERN.test(String(error2?.message || error2))) {
+            throw new Error(HIDDEN_HIGHLIGHT_MISS_MESSAGE);
           }
           const attemptedCandidateKeys = /* @__PURE__ */ new Set();
           for (const candidate of buildHighlightRetryCandidates(params?.text)) {
@@ -97658,7 +97683,7 @@ function finalizePublicActivities(activities = [], finalError = null) {
     return { ...activity, state: finalError ? "error" : "recovered" };
   });
 }
-function summarizeToolReliability(activities = [], pageActions = [], toolTraces = []) {
+function summarizeToolReliability(activities = [], pageActions = [], toolTraces = [], context = {}) {
   const publicActivities = getPublicActivities(activities);
   const pageActionCount = Array.isArray(pageActions) ? pageActions.length : 0;
   const failedStates = /* @__PURE__ */ new Set(["retrying", "recovered", "error"]);
@@ -97669,7 +97694,7 @@ function summarizeToolReliability(activities = [], pageActions = [], toolTraces 
     tool_failure_count: publicActivities.filter((activity) => failedStates.has(activity.state || "")).length,
     recovered_tool_failure_count: publicActivities.filter((activity) => activity.state === "recovered").length,
     final_tool_failure_count: publicActivities.filter((activity) => activity.state === "error").length,
-    tool_failure_reasons: summarizeToolFailureReasons(traces),
+    tool_failure_reasons: summarizeToolFailureReasons(traces, context),
     // Summed per call, so parallel calls can add up to more than the turn.
     tool_duration_ms: traces.reduce((total, trace) => total + traceMs(trace), 0),
     failed_tool_duration_ms: traces.filter((trace) => trace?.state === "error").reduce((total, trace) => total + traceMs(trace), 0)
@@ -98059,7 +98084,7 @@ function createOnhandBrowserRuntime(host) {
       return /source not found|saved source text is not currently loaded|no annotation found|no visible text matched/.test(message);
     }
     if (/^sidebar:(?:realtime-)?browser-tool$/.test(messageType)) {
-      return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no visible (?:pdf )?text matched|no image or figure matched/.test(message);
+      return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no (?:visible|readable) (?:pdf )?text matched|on the page but hidden|no image or figure matched/.test(message);
     }
     if (messageType === "pdf-viewer:load-authorized-source" && /\(http (?:404|410)\)/.test(message)) return true;
     return false;
@@ -98067,7 +98092,7 @@ function createOnhandBrowserRuntime(host) {
   function redactDiagnosticText(value, maxLength = 1200) {
     let text = String(value || "").replace(/\r\n?/g, "\n").replace(/[ \t\f\v]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
     if (!text) return "";
-    text = text.replace(/(Source not found on this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(Saved source text is not currently loaded in this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible (?:PDF )?text matched:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible interactive element matched text:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No editable field matched label:)\s*[\s\S]+/gi, "$1 [redacted label]").replace(/(No element matches selector:|no longer exists for selector:)\s*[\s\S]+/gi, "$1 [redacted selector]").replace(/(Element matched)\s+[\s\S]+?\s+(but is not visible|but is not text-editable)/gi, "$1 [redacted selector] $2").replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]").replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]").replace(/https?:\/\/[^\s)'"<>]+/gi, "[redacted_url]").replace(/chrome-extension:\/\/[a-z]{32}/gi, "chrome-extension://[extension]").replace(/moz-extension:\/\/[0-9a-f-]{36}/gi, "moz-extension://[extension]").replace(/file:\/\/[^\s)'"<>]+/gi, "[redacted_file_url]").replace(/\/Users\/[^/\s)'"<>]+/g, "/Users/[redacted_user]").replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]");
+    text = text.replace(/(Source not found on this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(Saved source text is not currently loaded in this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No (?:visible|readable) (?:PDF )?text matched:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(so it cannot be highlighted:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible interactive element matched text:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No editable field matched label:)\s*[\s\S]+/gi, "$1 [redacted label]").replace(/(No element matches selector:|no longer exists for selector:)\s*[\s\S]+/gi, "$1 [redacted selector]").replace(/(Element matched)\s+[\s\S]+?\s+(but is not visible|but is not text-editable)/gi, "$1 [redacted selector] $2").replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]").replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]").replace(/https?:\/\/[^\s)'"<>]+/gi, "[redacted_url]").replace(/chrome-extension:\/\/[a-z]{32}/gi, "chrome-extension://[extension]").replace(/moz-extension:\/\/[0-9a-f-]{36}/gi, "moz-extension://[extension]").replace(/file:\/\/[^\s)'"<>]+/gi, "[redacted_file_url]").replace(/\/Users\/[^/\s)'"<>]+/g, "/Users/[redacted_user]").replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]");
     if (text.length <= maxLength) return text;
     return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
   }
@@ -99681,7 +99706,8 @@ function createOnhandBrowserRuntime(host) {
     }
     await autoPersistReviewSnapshot(session, activeRequest, finalError);
     const publicActivities = finalizePublicActivities(uiState?.activities || [], finalError);
-    const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || [], activeRequest.toolTraces || []);
+    const askedOnPdf = askFeatureNames({ url: activeRequest.initialActiveUrl }).includes("ask_on_pdf") || (activeRequest.toolTraces || []).some((trace) => /^browser_(?:pdf_|open_pdf_)/.test(String(trace?.toolName || "")));
+    const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || [], activeRequest.toolTraces || [], { pdf: askedOnPdf });
     const errorReport = finalError ? buildErrorReportSnapshot(finalError, activeRequest, publicActivities) : null;
     const startedAtMs = Date.parse(activeRequest.createdAt || "");
     const turn = {

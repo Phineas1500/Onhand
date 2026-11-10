@@ -16,11 +16,25 @@
 //
 // Usage:
 //   node scripts/run-page-toolkit-sweep.mjs [--port 9347] [--page <id>]...
-//     [--max-sentences 5] [--budget-ms 4000] [--keep-tabs] [--list]
+//     [--max-sentences 5] [--budget-ms 4000] [--keep-tabs] [--list] [--bidi] [--verbose]
+//     [--perturb] [--background <path to another background.js>]
 //
 // Requires Helium/Chromium running with --remote-debugging-port. Pages that
 // fail to load (network flake, site change) are reported as SKIP, not FAIL;
 // span failures on a loaded page exit non-zero.
+//
+// --perturb also highlights each page's first sentences the way a model
+// tends to retype them (other punctuation, the end cut off with "…", a word
+// left out), which is what the toolkit's fuzzy matching is for.
+//
+// --background runs the toolkit from another copy of background.js (an
+// earlier commit's, say), to compare two versions on the same pages.
+//
+// --bidi drives the browser over WebDriver BiDi instead of CDP, which is how
+// the sweep runs in Firefox's engine (start Firefox with
+// --remote-debugging-port=<port> and a throwaway -profile). The toolkit then
+// runs in a BiDi sandbox, which isolates it from the page the way Firefox
+// isolates the extension's content scripts.
 import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -51,10 +65,29 @@ const SWEEP_PAGES = [
 	{ id: "gutenberg-novel", family: "large-plain", url: "https://www.gutenberg.org/files/1342/1342-h/1342-h.htm" },
 	{ id: "wcag-spec", family: "w3c-spec", url: "https://www.w3.org/TR/WCAG21/" },
 	{ id: "energy-heat-pump", family: "gov-cms", url: "https://www.energystar.gov/products/air_source_heat_pumps" },
+	// Prose set in bare <div>s and <span>s instead of paragraphs, as web apps,
+	// course sites and reference sites often do.
+	{ id: "khan-photosynthesis", family: "div-prose", url: "https://www.khanacademy.org/science/ap-biology/cellular-energetics/photosynthesis/a/intro-to-photosynthesis" },
+	{ id: "merriam-webster", family: "div-prose", url: "https://www.merriam-webster.com/dictionary/photosynthesis" },
+	// Readers outside the English-speaking world: accents and typographic
+	// spacing (French, German, Spanish), case folding that changes length
+	// (Turkish İ), scripts without spaces (Japanese, Chinese), right-to-left
+	// text (Arabic), combining marks (Hindi) and other alphabets.
+	{ id: "wikipedia-fr", family: "lang-fr", url: "https://fr.wikipedia.org/wiki/Photosynth%C3%A8se" },
+	{ id: "wikipedia-de", family: "lang-de", url: "https://de.wikipedia.org/wiki/Photosynthese" },
+	{ id: "wikipedia-es", family: "lang-es", url: "https://es.wikipedia.org/wiki/Fotos%C3%ADntesis" },
+	{ id: "wikipedia-tr", family: "lang-tr", url: "https://tr.wikipedia.org/wiki/Fotosentez" },
+	{ id: "wikipedia-id", family: "lang-id", url: "https://id.wikipedia.org/wiki/Fotosintesis" },
+	{ id: "wikipedia-ru", family: "lang-ru", url: "https://ru.wikipedia.org/wiki/%D0%A4%D0%BE%D1%82%D0%BE%D1%81%D0%B8%D0%BD%D1%82%D0%B5%D0%B7" },
+	{ id: "wikipedia-ar", family: "lang-ar", url: "https://ar.wikipedia.org/wiki/%D8%AA%D9%85%D8%AB%D9%8A%D9%84_%D8%B6%D9%88%D8%A6%D9%8A" },
+	{ id: "wikipedia-hi", family: "lang-hi", url: "https://hi.wikipedia.org/wiki/%E0%A4%AA%E0%A5%8D%E0%A4%B0%E0%A4%95%E0%A4%BE%E0%A4%B6-%E0%A4%B8%E0%A4%82%E0%A4%B6%E0%A5%8D%E0%A4%B2%E0%A5%87%E0%A4%B7%E0%A4%A3" },
+	{ id: "wikipedia-ja", family: "lang-ja", url: "https://ja.wikipedia.org/wiki/%E5%85%89%E5%90%88%E6%88%90" },
+	{ id: "wikipedia-zh", family: "lang-zh", url: "https://zh.wikipedia.org/wiki/%E5%85%89%E5%90%88%E4%BD%9C%E7%94%A8" },
+	{ id: "wikipedia-ko", family: "lang-ko", url: "https://ko.wikipedia.org/wiki/%EA%B4%91%ED%95%A9%EC%84%B1" },
 ];
 
 function parseArgs(argv) {
-	const args = { port: DEFAULT_PORT, pageIds: [], maxSentences: 5, budgetMs: 4000, keepTabs: false, list: false };
+	const args = { port: DEFAULT_PORT, pageIds: [], maxSentences: 5, budgetMs: 4000, keepTabs: false, list: false, bidi: false, verbose: false, perturb: false, background: "" };
 	for (let index = 2; index < argv.length; index += 1) {
 		const value = argv[index];
 		const readValue = (flag) => (value.includes("=") ? value.slice(flag.length + 1) : argv[(index += 1)]);
@@ -63,6 +96,10 @@ function parseArgs(argv) {
 		else if (value === "--max-sentences" || value.startsWith("--max-sentences=")) args.maxSentences = Number(readValue("--max-sentences"));
 		else if (value === "--budget-ms" || value.startsWith("--budget-ms=")) args.budgetMs = Number(readValue("--budget-ms"));
 		else if (value === "--keep-tabs") args.keepTabs = true;
+		else if (value === "--bidi") args.bidi = true;
+		else if (value === "--verbose") args.verbose = true;
+		else if (value === "--perturb") args.perturb = true;
+		else if (value === "--background" || value.startsWith("--background=")) args.background = String(readValue("--background"));
 		else if (value === "--list") args.list = true;
 		else throw new Error(`Unknown argument: ${value}`);
 	}
@@ -70,8 +107,8 @@ function parseArgs(argv) {
 	return args;
 }
 
-async function loadPageToolkitFactory() {
-	const source = await readFile(join(ROOT, "packages/browser-extension/background.js"), "utf8");
+async function loadPageToolkitFactory(backgroundPath = "") {
+	const source = await readFile(backgroundPath || join(ROOT, "packages/browser-extension/background.js"), "utf8");
 	const start = source.indexOf("const createPageToolkit = ");
 	const end = source.indexOf("\n};\n\nasync function evaluateInTab", start);
 	if (start === -1 || end === -1) throw new Error("createPageToolkit source markers not found");
@@ -79,8 +116,8 @@ async function loadPageToolkitFactory() {
 	return source.slice(expressionStart, end + 2).trim().replace(/;$/, "");
 }
 
-async function loadBackgroundFunction(functionName) {
-	const source = await readFile(join(ROOT, "packages/browser-extension/background.js"), "utf8");
+async function loadBackgroundFunction(functionName, backgroundPath = "") {
+	const source = await readFile(backgroundPath || join(ROOT, "packages/browser-extension/background.js"), "utf8");
 	const start = source.indexOf(`function ${functionName}`);
 	if (start === -1) throw new Error(`${functionName} declaration not found`);
 	const bodyStart = source.indexOf("{", source.indexOf(")", start));
@@ -225,12 +262,16 @@ function sampleSentences(markdown, maxSentences) {
 		.filter(Boolean);
 	const sentences = [];
 	for (const line of lines) {
-		for (const raw of line.split(/(?<=[.!?])\s+(?=[A-Z"“(])/)) {
+		// Sentence ends: Latin-style punctuation before a capital or an opening
+		// quote, or the full stops of Chinese/Japanese, Arabic and Hindi.
+		for (const raw of line.split(/(?<=[.!?])\s+(?=[\p{Lu}"“«„(])|(?<=[。！？؟।])\s*/u)) {
 			const sentence = raw.trim();
-			if (sentence.length < 50 || sentence.length > 240) continue;
+			// Scripts written without spaces pack a sentence into fewer characters.
+			const unspaced = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(sentence);
+			if (sentence.length < (unspaced ? 20 : 50) || sentence.length > 240) continue;
 			// Skip TeX/markdown residue and low-letter-density fragments (table rows, formulas).
 			if (/[\\{}|]|\$\$?/.test(sentence)) continue;
-			const letters = (sentence.match(/[a-zA-Z]/g) || []).length;
+			const letters = (sentence.match(/[\p{L}\p{M}]/gu) || []).length;
 			if (letters / sentence.length < 0.6) continue;
 			sentences.push(sentence);
 		}
@@ -243,6 +284,37 @@ function sampleSentences(markdown, maxSentences) {
 		picks.add(sentences[Math.min(sentences.length - 1, Math.round(position * (sentences.length - 1)))]);
 	}
 	return Array.from(picks).slice(0, maxSentences);
+}
+
+const UNSPACED_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+
+// The ways a model's quote commonly differs from the page's exact words.
+function perturbSentence(sentence) {
+	const variants = [];
+	// Same words, punctuation retyped away (inside-word apostrophes and hyphens stay).
+	const retyped = sentence.replace(/(?<![\p{L}\p{N}])[\p{P}]+|[\p{P}]+(?![\p{L}\p{N}])/gu, " ").replace(/\s+/g, " ").trim();
+	if (retyped !== sentence && retyped.length >= 20) variants.push({ type: "retyped", text: retyped });
+	const unspaced = UNSPACED_SCRIPT.test(sentence);
+	const words = sentence.split(/\s+/);
+	// The end cut off, as when the text a model read was truncated.
+	if (unspaced && sentence.length >= 24) variants.push({ type: "trimmed", text: `${sentence.slice(0, Math.floor(sentence.length * 0.8))}…` });
+	else if (words.length >= 8) variants.push({ type: "trimmed", text: `${words.slice(0, -2).join(" ")}…` });
+	// A word left out of the middle.
+	if (!unspaced && words.length >= 10) variants.push({ type: "dropped", text: words.filter((_, index) => index !== Math.floor(words.length / 2)).join(" ") });
+	return variants;
+}
+
+// Letters and digits only, so punctuation and spacing don't decide the check.
+function lettersOnly(value) {
+	return String(value || "").normalize("NFKD").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function landedOnSource(matchedText, source) {
+	const matched = lettersOnly(matchedText);
+	const original = lettersOnly(source);
+	if (!matched || !original) return false;
+	const probe = Math.min(16, matched.length, original.length);
+	return original.includes(matched.slice(0, probe)) || matched.includes(original.slice(0, probe)) || original.includes(matched.slice(-probe));
 }
 
 function sampleHeading(headingOutline) {
@@ -258,43 +330,124 @@ function sampleMathSource(markdown) {
 	return match ? match[0] : null;
 }
 
-async function sweepPage(page, options, sources) {
-	const tab = await createTab(options.port, page.url);
-	const result = { page, spans: [], skipped: null, tabClosed: false };
+// One WebDriver BiDi session for the whole sweep.
+async function connectBidi(port) {
+	const ws = new WebSocket(`ws://127.0.0.1:${port}/session`, { maxPayload: 128 * 1024 * 1024 });
+	let messageId = 0;
+	const pending = new Map();
+	ws.on("message", (raw) => {
+		const message = JSON.parse(raw.toString());
+		if (message.id && pending.has(message.id)) {
+			pending.get(message.id)(message);
+			pending.delete(message.id);
+		}
+	});
+	await new Promise((resolve, reject) => {
+		ws.on("open", resolve);
+		ws.on("error", reject);
+	});
+	const send = (method, params = {}, timeoutMs = 60000) =>
+		new Promise((resolve, reject) => {
+			const id = ++messageId;
+			const timeout = setTimeout(() => {
+				pending.delete(id);
+				reject(new Error(`BiDi ${method} timed out`));
+			}, timeoutMs);
+			pending.set(id, (message) => {
+				clearTimeout(timeout);
+				if (message.type === "error") reject(new Error(`${method}: ${message.message || message.error || "BiDi error"}`));
+				else resolve(message.result);
+			});
+			ws.send(JSON.stringify({ id, method, params }));
+		});
+	try {
+		await send("session.new", { capabilities: {} });
+	} catch (error) {
+		ws.close();
+		throw error;
+	}
+	// Firefox allows one BiDi session at a time and keeps it after the socket
+	// closes, so end it explicitly or the next run can't start one.
+	return { send, close: async () => { await send("session.end", {}, 5000).catch(() => {}); ws.close(); } };
+}
+
+// A loaded page as { evaluate(expression) -> parsed JSON, close() }: the
+// expression runs isolated from the page's own scripts.
+async function openCdpPage(options, url) {
+	const tab = await createTab(options.port, url);
 	let session = null;
+	const close = async () => {
+		session?.ws?.close();
+		if (!options.keepTabs) await closeTab(options.port, tab.id);
+	};
 	try {
 		if (!tab.webSocketDebuggerUrl) throw new Error("Tab has no debugger URL (another client attached?)");
 		session = connect(tab.webSocketDebuggerUrl);
 		await session.opened;
 		const { send } = session;
 		await send("Page.enable");
-		await waitForPageReady(send, page.url);
+		await waitForPageReady(send, url);
 		await new Promise((resolve) => setTimeout(resolve, 1500));
 		const { frameTree } = await send("Page.getFrameTree");
 		const { executionContextId } = await send("Page.createIsolatedWorld", {
 			frameId: frameTree.frame.id,
 			worldName: "onhand-toolkit-sweep",
 		});
+		return { evaluate: (expression) => evaluateJson(send, executionContextId, expression), close };
+	} catch (error) {
+		await close();
+		throw error;
+	}
+}
 
-		const extraction = await evaluateJson(
-			send,
-			executionContextId,
-			`(async () => JSON.stringify(await (${sources.extractSource})({ maxChars: 20000 })))()`,
-		);
+async function openBidiPage(options, url) {
+	const { send } = options.bidiSession;
+	const { context } = await send("browsingContext.create", { type: "tab" });
+	const close = async () => {
+		if (!options.keepTabs) await send("browsingContext.close", { context }).catch(() => {});
+	};
+	const evaluateIn = async (target, expression) => {
+		const reply = await send("script.evaluate", { expression, target, awaitPromise: true, resultOwnership: "none" });
+		if (reply?.type === "exception") throw new Error(String(reply.exceptionDetails?.text || "Evaluation failed").slice(0, 200));
+		return typeof reply?.result?.value === "string" ? JSON.parse(reply.result.value) : reply?.result?.value;
+	};
+	try {
+		await send("browsingContext.navigate", { context, url, wait: "complete" }, 45000);
+		const landed = await evaluateIn({ context }, "JSON.stringify(location.href)");
+		const expectedHost = normalizedHostname(url);
+		if (expectedHost && normalizedHostname(landed) !== expectedHost) throw new Error(`Tab navigated off-host: expected ${expectedHost}, got ${landed}`);
+		await new Promise((resolve) => setTimeout(resolve, 1500));
+		return { evaluate: (expression) => evaluateIn({ context, sandbox: "onhand-toolkit-sweep" }, expression), close };
+	} catch (error) {
+		await close();
+		throw error;
+	}
+}
+
+async function sweepPage(page, options, sources) {
+	const result = { page, spans: [], skipped: null, tabClosed: false };
+	let opened = null;
+	try {
+		opened = await (options.bidi ? openBidiPage(options, page.url) : openCdpPage(options, page.url));
+		const { evaluate } = opened;
+
+		const extraction = await evaluate(`(async () => JSON.stringify(await (${sources.extractSource})({ maxChars: 20000 })))()`);
 		if (!extraction?.text || extraction.text.length < 400) {
 			throw new Error(`Readable extraction too small (${extraction?.text?.length || 0} chars, root=${extraction?.root || "?"})`);
 		}
 
-		await evaluateJson(
-			send,
-			executionContextId,
-			`(() => { window.__onhandSweepToolkit = (${sources.factorySource})({ theme: "light" }); return JSON.stringify(true); })()`,
-		);
+		await evaluate(`(() => { window.__onhandSweepToolkit = (${sources.factorySource})({ theme: "light" }); return JSON.stringify(true); })()`);
 
 		const spans = [];
-		for (const sentence of sampleSentences(extraction.text, options.maxSentences)) {
+		const sentences = sampleSentences(extraction.text, options.maxSentences);
+		for (const sentence of sentences) {
 			spans.push({ type: "sentence", text: sentence });
 		}
+		// Perturbed copies go last and one sentence at a time, each on a page
+		// cleared of the marks before it, so every result stands for one quote.
+		const perturbed = options.perturb
+			? sentences.slice(0, 3).flatMap((sentence) => perturbSentence(sentence).map((variant) => ({ ...variant, source: sentence })))
+			: [];
 		const heading = sampleHeading(extraction.headingOutline);
 		if (heading) spans.push({ type: "heading", text: heading });
 		const mathSource = sampleMathSource(extraction.text);
@@ -305,9 +458,7 @@ async function sweepPage(page, options, sources) {
 			const startedAt = Date.now();
 			let outcome;
 			try {
-				outcome = await evaluateJson(
-					send,
-					executionContextId,
+				outcome = await evaluate(
 					`(async () => {
 						try {
 							const r = await window.__onhandSweepToolkit.highlightText(${JSON.stringify(span.text)}, { scrollIntoView: false });
@@ -323,15 +474,38 @@ async function sweepPage(page, options, sources) {
 			result.spans.push({ ...span, ...outcome, ms: Date.now() - startedAt });
 		}
 
-		await evaluateJson(send, executionContextId, `(() => JSON.stringify(window.__onhandSweepToolkit.clearAnnotations()))()`).catch(() => {});
+		for (const span of perturbed) {
+			await evaluate(`(() => JSON.stringify(window.__onhandSweepToolkit.clearAnnotations()))()`).catch(() => {});
+			const startedAt = Date.now();
+			let outcome;
+			try {
+				outcome = await evaluate(
+					`(async () => {
+						try {
+							const r = await window.__onhandSweepToolkit.highlightText(${JSON.stringify(span.text)}, { scrollIntoView: false });
+							return JSON.stringify({ ok: true, kind: r.kind, approximate: Boolean(r.approximate), fallback: r.fallback || null, matched: String(r.matchedText || "").slice(0, 400) });
+						} catch (error) {
+							return JSON.stringify({ ok: false, error: String((error && error.message) || error).slice(0, 200) });
+						}
+					})()`,
+				);
+			} catch (error) {
+				outcome = { ok: false, error: error.message };
+			}
+			// A mark that landed somewhere other than the sentence it was made
+			// from is worse than a miss.
+			if (outcome.ok && !landedOnSource(outcome.matched, span.source)) {
+				outcome = { ok: false, error: `Landed elsewhere: ${JSON.stringify(String(outcome.matched || "").slice(0, 80))}` };
+			}
+			result.spans.push({ ...span, ...outcome, ms: Date.now() - startedAt });
+		}
+
+		await evaluate(`(() => JSON.stringify(window.__onhandSweepToolkit.clearAnnotations()))()`).catch(() => {});
 	} catch (error) {
 		result.skipped = error?.message || String(error);
 	} finally {
-		session?.ws?.close();
-		if (!options.keepTabs) {
-			await closeTab(options.port, tab.id);
-			result.tabClosed = true;
-		}
+		await opened?.close();
+		result.tabClosed = !options.keepTabs;
 	}
 	return result;
 }
@@ -352,13 +526,19 @@ async function main() {
 		const missing = options.pageIds.filter((id) => !pages.some((page) => page.id === id));
 		if (missing.length) throw new Error(`Unknown page id(s): ${missing.join(", ")}`);
 	}
-	const probe = await httpRequest("GET", options.port, "/json/version").catch(() => null);
-	if (!probe || probe.status !== 200) {
-		throw new Error(`No CDP endpoint on port ${options.port}. Start Helium/Chromium with --remote-debugging-port=${options.port}.`);
+	if (options.bidi) {
+		options.bidiSession = await connectBidi(options.port).catch((error) => {
+			throw new Error(`No WebDriver BiDi endpoint on port ${options.port} (${error?.message || error}). Start Firefox with --remote-debugging-port=${options.port}.`);
+		});
+	} else {
+		const probe = await httpRequest("GET", options.port, "/json/version").catch(() => null);
+		if (!probe || probe.status !== 200) {
+			throw new Error(`No CDP endpoint on port ${options.port}. Start Helium/Chromium with --remote-debugging-port=${options.port}.`);
+		}
 	}
 	const sources = {
-		factorySource: await loadPageToolkitFactory(),
-		extractSource: await loadBackgroundFunction("extractReadableContentInPage"),
+		factorySource: await loadPageToolkitFactory(options.background),
+		extractSource: await loadBackgroundFunction("extractReadableContentInPage", options.background),
 	};
 
 	let failedSpans = 0;
@@ -383,10 +563,16 @@ async function main() {
 		console.log(
 			`${status} ${page.id} (${page.family}) spans=${result.spans.length} exact=${result.spans.filter((span) => span.ok && !span.approximate).length} approx=${approximates.length} fail=${failures.length} p95=${p95}ms`,
 		);
+		if (options.verbose) {
+			// Every span in the order it was highlighted: a later span can fail
+			// only because of the marks made before it.
+			for (const [index, span] of result.spans.entries()) console.log(`  ${index + 1}. ${span.ok ? (span.approximate ? "approx" : "exact") : "FAIL"} ${span.type}: ${JSON.stringify(span.text)}`);
+		}
 		for (const span of failures) console.log(`  FAIL ${formatSpanLabel(span)} — ${span.error}`);
 		for (const span of slow) console.log(`  SLOW ${formatSpanLabel(span)} — ${span.ms}ms > ${options.budgetMs}ms`);
 		for (const span of approximates) console.log(`  approx ${formatSpanLabel(span)} — fallback=${span.fallback || "none"}`);
 	}
+	await options.bidiSession?.close();
 	console.log(
 		`\nPage toolkit sweep: pages=${pages.length} skipped=${skippedPages} spanFailures=${failedSpans} approximate=${approximateSpans} slow=${slowSpans}`,
 	);

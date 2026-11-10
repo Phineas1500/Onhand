@@ -1,0 +1,71 @@
+{
+	"description": "Questions asked in the page's own language on non-English pages. Most of Onhand's readers are outside English-speaking countries; these check that answers still land their highlights when the page isn't in Latin script or uses other typography.",
+	"cases": [
+		{
+			"id": "fr-photosynthese",
+			"url": "https://fr.wikipedia.org/wiki/Photosynth%C3%A8se",
+			"prompt": "Qu'est-ce que la photosynthèse ? Surligne les points clés.",
+			"expect": { "minHighlights": 2, "forbiddenToolPatterns": ["^browser_navigate$"] }
+		},
+		{
+			"id": "de-photosynthese",
+			"url": "https://de.wikipedia.org/wiki/Photosynthese",
+			"prompt": "Was passiert bei der Lichtreaktion? Markiere die wichtigsten Sätze.",
+			"expect": { "minHighlights": 2, "forbiddenToolPatterns": ["^browser_navigate$"] }
+		},
+		{
+			"id": "es-fotosintesis",
+			"url": "https://es.wikipedia.org/wiki/Fotos%C3%ADntesis",
+			"prompt": "¿Cuáles son las fases de la fotosíntesis? Resalta lo más importante.",
+			"expect": { "minHighlights": 2, "forbiddenToolPatterns": ["^browser_navigate$"] }
+		},
+		{
+			"id": "tr-fotosentez",
+			"url": "https://tr.wikipedia.org/wiki/Fotosentez",
+			"prompt": "Fotosentez nedir? Önemli noktaları vurgula.",
+			"expect": { "minHighlights": 2, "forbiddenToolPatterns": ["^browser_navigate$"] }
+		},
+		{
+			"id": "id-fotosintesis",
+			"url": "https://id.wikipedia.org/wiki/Fotosintesis",
+			"prompt": "Apa itu fotosintesis? Sorot poin-poin pentingnya.",
+			"expect": { "minHighlights": 2, "forbiddenToolPatterns": ["^browser_navigate$"] }
+		},
+		{
+			"id": "ru-fotosintez",
+			"url": "https://ru.wikipedia.org/wiki/%D0%A4%D0%BE%D1%82%D0%BE%D1%81%D0%B8%D0%BD%D1%82%D0%B5%D0%B7",
+			"prompt": "Что такое фотосинтез и какие у него стадии? Выдели главное.",
+			"expect": { "minHighlights": 2, "forbiddenToolPatterns": ["^browser_navigate$"] }
+		},
+		{
+			"id": "ar-photosynthesis",
+			"url": "https://ar.wikipedia.org/wiki/%D8%AA%D9%85%D8%AB%D9%8A%D9%84_%D8%B6%D9%88%D8%A6%D9%8A",
+			"prompt": "ما هو التمثيل الضوئي؟ ظلّل النقاط الرئيسية.",
+			"expect": { "minHighlights": 2, "forbiddenToolPatterns": ["^browser_navigate$"] }
+		},
+		{
+			"id": "hi-photosynthesis",
+			"url": "https://hi.wikipedia.org/wiki/%E0%A4%AA%E0%A5%8D%E0%A4%B0%E0%A4%95%E0%A4%BE%E0%A4%B6-%E0%A4%B8%E0%A4%82%E0%A4%B6%E0%A5%8D%E0%A4%B2%E0%A5%87%E0%A4%B7%E0%A4%A3",
+			"prompt": "प्रकाश-संश्लेषण क्या है? मुख्य बिंदुओं को हाइलाइट करें।",
+			"expect": { "minHighlights": 2, "forbiddenToolPatterns": ["^browser_navigate$"] }
+		},
+		{
+			"id": "ja-photosynthesis",
+			"url": "https://ja.wikipedia.org/wiki/%E5%85%89%E5%90%88%E6%88%90",
+			"prompt": "光合成とは何ですか？重要なポイントをハイライトしてください。",
+			"expect": { "minHighlights": 2, "forbiddenToolPatterns": ["^browser_navigate$"] }
+		},
+		{
+			"id": "zh-photosynthesis",
+			"url": "https://zh.wikipedia.org/wiki/%E5%85%89%E5%90%88%E4%BD%9C%E7%94%A8",
+			"prompt": "什么是光合作用？请标出要点。",
+			"expect": { "minHighlights": 2, "forbiddenToolPatterns": ["^browser_navigate$"] }
+		},
+		{
+			"id": "ko-photosynthesis",
+			"url": "https://ko.wikipedia.org/wiki/%EA%B4%91%ED%95%A9%EC%84%B1",
+			"prompt": "광합성이란 무엇인가요? 핵심 내용을 하이라이트해 주세요.",
+			"expect": { "minHighlights": 2, "forbiddenToolPatterns": ["^browser_navigate$"] }
+		}
+	]
+}

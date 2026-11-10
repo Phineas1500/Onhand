@@ -2537,6 +2537,16 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 						},
 					]
 				: []),
+			...(shouldUseWideCompactQuery(wideCompactHighlightSearchText(rawQuery))
+				? [
+						{
+							text: mappedText.wideCompactText,
+							positions: mappedText.wideCompactPositions,
+							query: wideCompactHighlightSearchText(rawQuery),
+							fallback: "compact-text",
+						},
+					]
+				: []),
 		];
 		for (const mode of modes) {
 			if (!mode.query || !mode.text.includes(mode.query)) continue;
@@ -2905,6 +2915,14 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			"”": '"',
 			"„": '"',
 			"‟": '"',
+			"«": '"',
+			"»": '"',
+			"「": '"',
+			"」": '"',
+			"『": '"',
+			"』": '"',
+			"‹": "'",
+			"›": "'",
 			"‘": "'",
 			"’": "'",
 			"‚": "'",
@@ -2918,6 +2936,8 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 
 	const normalizeHighlightSearchFragment = (character) => {
 		if (HIGHLIGHT_SEARCH_IGNORED_CHARACTERS.has(character)) return "";
+		// ASCII needs none of the work below, and it is most of most pages.
+		if (character.length === 1 && character.charCodeAt(0) < 128) return character;
 		const aliased = HIGHLIGHT_CHARACTER_ALIASES.get(character);
 		if (aliased) return aliased;
 		return String(character || "")
@@ -2942,8 +2962,11 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 				searchPositions.push(pendingSpace);
 				pendingSpace = undefined;
 			}
-			searchText += character.toLowerCase();
-			searchPositions.push(position);
+			// One position per UTF-16 unit, so an emoji or other astral character
+			// doesn't shift every position after it by one.
+			const lowered = character.toLowerCase();
+			searchText += lowered;
+			for (let unit = 0; unit < lowered.length; unit += 1) searchPositions.push(position);
 		};
 
 		const source = String(text || "");
@@ -2967,6 +2990,42 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 
 		return { searchText, searchPositions, compactText, compactPositions };
 	};
+
+	// The compact projection keeps ASCII letters and digits only. On text in
+	// another script it is empty, so the punctuation- and spacing-tolerant match
+	// it exists for never ran there: a Russian, Arabic or Japanese quote had to
+	// match to the character. The wide projection keeps letters, their marks
+	// and digits in every script. It is a second projection, not a change to
+	// the first, because saved highlight anchors store the ASCII one.
+	const WIDE_WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;
+	// Arabic tatweel and vowel marks are optional typography.
+	const WIDE_COMPACT_IGNORED_CHARACTER = /[ـً-ٰٟ]/;
+	const NON_ASCII_LETTER = /[^\P{L}\p{ASCII}]/u;
+	// Scripts written without spaces between words.
+	const UNSPACED_SCRIPT_CHARACTER = /[\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Thai}\p{scx=Lao}\p{scx=Khmer}\p{scx=Myanmar}]/u;
+
+	const buildWideCompactProjection = (searchText, searchPositions = []) => {
+		let text = "";
+		const positions = [];
+		const source = String(searchText || "");
+		for (let index = 0; index < source.length; ) {
+			const character = String.fromCodePoint(source.codePointAt(index));
+			if (WIDE_WORD_CHARACTER.test(character) && !WIDE_COMPACT_IGNORED_CHARACTER.test(character)) {
+				text += character;
+				for (let unit = 0; unit < character.length; unit += 1) positions.push(searchPositions[index + unit] || searchPositions[index] || null);
+			}
+			index += character.length;
+		}
+		return { text, positions };
+	};
+
+	const wideCompactHighlightSearchText = (value) => buildWideCompactProjection(normalizeHighlightSearchText(value)).text;
+
+	// The wide projection is only worth scanning for a quote the ASCII one
+	// can't carry: one with letters outside ASCII and enough of them to be
+	// distinctive (fewer in scripts that pack a word into one or two characters).
+	const shouldUseWideCompactQuery = (wideCompactQuery) =>
+		NON_ASCII_LETTER.test(wideCompactQuery) && wideCompactQuery.length >= (UNSPACED_SCRIPT_CHARACTER.test(wideCompactQuery) ? 6 : 12);
 
 	const getRangeEndOffset = (position) => position?.endOffset ?? (position?.offset ?? 0) + 1;
 
@@ -3006,7 +3065,13 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 	// A sentence that only contains some notation ("keys of dimension d_k, and
 	// values of dimension d_v") is prose: its mark belongs on the sentence's
 	// paragraph, not on one formula inside it (which marked KaTeX's hidden copy).
-	const isProseDominantHighlightQuery = (value) => (String(value || "").match(/[A-Za-z]{3,}/g) || []).length >= 6;
+	const isProseDominantHighlightQuery = (value) => {
+		const text = String(value || "");
+		if ((text.match(/\p{L}{3,}/gu) || []).length >= 6) return true;
+		// Scripts without spaces have no words to count; a dozen of their
+		// characters is a sentence's worth.
+		return (text.match(/[\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Thai}]/gu) || []).length >= 12;
+	};
 
 	const isMathLikeHighlightQuery = (value) => {
 		const text = String(value || "").trim();
@@ -3098,14 +3163,65 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		await waitForLayout();
 	};
 
+	// The words of normalized (search) text, each with where it starts and
+	// ends there. A word is a run of letters, marks and digits in any script;
+	// this once split on everything outside a-z and 0-9, which left Cyrillic,
+	// Arabic, Hindi or Chinese text with no words at all, so fuzzy matching
+	// (which compares words) never ran on it. Scripts written without spaces
+	// have no word breaks to split on: a run of them is cut into overlapping
+	// two-character pieces, which a quote and the page share the way they
+	// share words elsewhere.
+	const scanSearchTokens = (searchText) => {
+		const source = String(searchText || "");
+		const tokens = [];
+		for (const match of source.matchAll(/[\p{L}\p{M}\p{N}]+/gu)) {
+			const word = match[0];
+			if (!UNSPACED_SCRIPT_CHARACTER.test(word)) {
+				tokens.push({ token: word, start: match.index, end: match.index + word.length });
+				continue;
+			}
+			let offset = match.index;
+			let spacedStart = -1;
+			let run = [];
+			const flushSpaced = () => {
+				if (spacedStart >= 0) tokens.push({ token: source.slice(spacedStart, offset), start: spacedStart, end: offset });
+				spacedStart = -1;
+			};
+			const flushRun = () => {
+				if (run.length === 1) tokens.push({ token: run[0].character, start: run[0].offset, end: run[0].offset + run[0].character.length });
+				for (let index = 0; index + 1 < run.length; index += 1) {
+					const next = run[index + 1];
+					tokens.push({ token: run[index].character + next.character, start: run[index].offset, end: next.offset + next.character.length });
+				}
+				run = [];
+			};
+			for (const character of word) {
+				if (UNSPACED_SCRIPT_CHARACTER.test(character)) {
+					flushSpaced();
+					run.push({ character, offset });
+				} else {
+					flushRun();
+					if (spacedStart < 0) spacedStart = offset;
+				}
+				offset += character.length;
+			}
+			flushRun();
+			flushSpaced();
+		}
+		return tokens;
+	};
+
 	const tokenizeNormalizedText = (value) =>
-		normalizeHighlightSearchText(value)
-			.split(/[^a-z0-9]+/i)
-			.map((part) => part.trim())
+		scanSearchTokens(normalizeHighlightSearchText(value))
+			.map((entry) => entry.token)
 			.filter((part) => part.length >= 2);
 
+	// A two-character piece of an unspaced script counts like a word of three
+	// letters or more.
 	const tokenizeApproximateQuery = (value) =>
-		tokenizeNormalizedText(value).filter((part) => part.length >= 3 && !APPROXIMATE_HIGHLIGHT_STOP_WORDS.has(part));
+		tokenizeNormalizedText(value).filter(
+			(part) => (part.length >= 3 || UNSPACED_SCRIPT_CHARACTER.test(part)) && !APPROXIMATE_HIGHLIGHT_STOP_WORDS.has(part),
+		);
 
 	const countTokenOverlap = (tokens, otherTokenSet) => {
 		let overlap = 0;
@@ -3141,6 +3257,81 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			candidates.push(container);
 		}
 		return candidates;
+	};
+
+	// Words outside the prose containers above. Many sites set their text in
+	// bare <div>s and <span>s (web apps, course sites, forms, feeds) or in
+	// definition lists and labels, and a quote from there matched no container:
+	// every highlight on such a page failed, however exact the quote. These are
+	// the nearest block-like ancestors of that loose text, found by tag name
+	// (no style lookups), for a pass that runs only once the containers above
+	// held no exact match.
+	const LOOSE_TEXT_BLOCK_TAGS = new Set([
+		"ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "BODY", "CAPTION", "DD", "DETAILS", "DIALOG", "DIV", "DL", "DT", "FIELDSET", "FIGCAPTION",
+		"FIGURE", "FOOTER", "FORM", "H1", "H2", "H3", "H4", "H5", "H6", "HEADER", "HR", "LABEL", "LEGEND", "LI", "MAIN", "NAV", "OL", "P", "PRE",
+		"SECTION", "SUMMARY", "TABLE", "TBODY", "TD", "TFOOT", "TH", "THEAD", "TR", "UL",
+	]);
+	// Controls, code the page runs and text the reader is editing aren't prose.
+	const LOOSE_TEXT_SKIPPED_ANCESTOR_SELECTOR =
+		'script, style, noscript, template, head, textarea, input, select, option, button, [role="button"], svg, canvas, [contenteditable="true"], [contenteditable=""]';
+
+	const nearestLooseTextBlock = (node) => {
+		let element = node instanceof Element ? node : node?.parentElement;
+		while (element && !LOOSE_TEXT_BLOCK_TAGS.has(element.tagName)) element = element.parentElement;
+		return element || null;
+	};
+
+	// The page's text by nearest block-like ancestor, in document order: only
+	// the text outside the prose containers, or (for hidden-text detection)
+	// all of it.
+	const collectLooseTextGroups = ({ includeProseContainers = false } = {}) => {
+		const root = document.body || document.documentElement;
+		const groups = new Map();
+		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+		let node;
+		while ((node = walker.nextNode())) {
+			const value = String(node.nodeValue || "");
+			if (!value.trim()) continue;
+			const parent = node.parentElement;
+			if (!parent || (!includeProseContainers && parent.closest(ANNOTATION_CONTAINER_SELECTOR))) continue;
+			if (parent.closest(LOOSE_TEXT_SKIPPED_ANCESTOR_SELECTOR) || parent.closest(ONHAND_ANNOTATION_DOM_SELECTOR)) continue;
+			const block = nearestLooseTextBlock(parent) || root;
+			groups.set(block, `${groups.get(block) || ""}${value} `);
+		}
+		return groups;
+	};
+
+	const collectLooseTextBlocks = (queries, rawQuery) => {
+		const groups = collectLooseTextGroups();
+		const queryTokens = tokenizeApproximateQuery(rawQuery);
+		const minimumOverlap = Math.min(2, queryTokens.length);
+		const blocks = [];
+		for (const [block, text] of groups) {
+			// The joined text is only a cheap filter (spacing-blind where it
+			// can be); the exact passes run on the block's real text map.
+			const holdsQuery =
+				(queries.compactQuery.length >= 4 && compactHighlightSearchText(text).includes(queries.compactQuery)) ||
+				(queries.wideCompactQuery.length >= 2 && wideCompactHighlightSearchText(text).includes(queries.wideCompactQuery)) ||
+				normalizeHighlightSearchText(text).includes(queries.searchQuery);
+			if (!holdsQuery && (!queryTokens.length || countTokenOverlap(queryTokens, new Set(tokenizeApproximateQuery(text))) < minimumOverlap)) continue;
+			if (!isVisible(block) || isInsideExcludedAnnotationAncestor(block)) continue;
+			blocks.push(block);
+		}
+		return blocks;
+	};
+
+	// Text that is in the page but not showing (a collapsed section, an
+	// inactive tab panel): the element holding the quote, or null.
+	const findHiddenHighlightText = (queries) => {
+		const groups = collectLooseTextGroups({ includeProseContainers: true });
+		for (const [block, text] of groups) {
+			const holdsQuery =
+				(queries.useCompactQuery && compactHighlightSearchText(text).includes(queries.compactQuery)) ||
+				(queries.useWideCompactQuery && wideCompactHighlightSearchText(text).includes(queries.wideCompactQuery)) ||
+				(queries.searchQuery.length >= 12 && normalizeHighlightSearchText(text).includes(queries.searchQuery));
+			if (holdsQuery && !isVisible(block)) return block;
+		}
+		return null;
 	};
 
 	// Containers for context-anchored recovery: the highlighted text itself has
@@ -3341,6 +3532,28 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 					},
 				]
 			: []),
+		// The same two punctuation-tolerant passes for a quote in a script the
+		// ASCII projection drops.
+		...(queries.useWideCompactQuery
+			? [
+					{
+						text: mappedText.wideCompactText,
+						positions: mappedText.wideCompactPositions,
+						query: queries.wideCompactQuery,
+						fallback: queries.compactFallback,
+					},
+				]
+			: []),
+		...(queries.useWideCompactQuery && queries.citationStrippedWideCompactQuery && queries.citationStrippedWideCompactQuery !== queries.wideCompactQuery
+			? [
+					{
+						text: mappedText.wideCompactText,
+						positions: mappedText.wideCompactPositions,
+						query: queries.citationStrippedWideCompactQuery,
+						fallback: "citation-stripped-compact-text",
+					},
+				]
+			: []),
 	];
 
 	const buildNormalizedTextMap = (textNodes, options = {}) => {
@@ -3363,6 +3576,11 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 				const next = breakWalker.nextNode();
 				if (!next || next === toNode) return false;
 				if (next.nodeName === "BR") return true;
+				// So does the whitespace between two inline elements
+				// ("<b>one</b> <i>two</i>"): that text node holds nothing else, so
+				// it is not among the nodes being mapped, and without this the
+				// words on either side glued ("onetwo") and matched only loosely.
+				if (next.nodeType === 3 && next.nodeValue && !next.nodeValue.trim()) return true;
 			}
 			return false;
 		};
@@ -3373,6 +3591,12 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 				pendingSpace = { node, offset: 0, endOffset: 0 };
 			}
 			if (options.pdfNodeBoundaries && hasContent && !pendingSpace && pdfTextNodeBoundaryNeedsSpace(previousNode, node)) {
+				pendingSpace = { node, offset: 0, endOffset: 0 };
+			}
+			// Loose text is mapped a block at a time, and that block can hold
+			// other blocks ("<div>Intro<p>First</p><p>Second</p></div>"): text in
+			// different ones reads as separate words, not "IntroFirstSecond".
+			if (options.blockBoundaries && hasContent && !pendingSpace && previousNode && nearestLooseTextBlock(previousNode) !== nearestLooseTextBlock(node)) {
 				pendingSpace = { node, offset: 0, endOffset: 0 };
 			}
 			// Whitespace-only nodes between cells are dropped, so adjacent cells
@@ -3413,6 +3637,9 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		}
 
 		const searchProjection = buildSearchProjection(text, positions);
+		// Built on first use: only a quote with letters outside ASCII reads it.
+		let wideCompact = null;
+		const getWideCompact = () => (wideCompact ||= buildWideCompactProjection(searchProjection.searchText, searchProjection.searchPositions));
 		return {
 			text,
 			lowerText: text.toLowerCase(),
@@ -3421,6 +3648,12 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			searchPositions: searchProjection.searchPositions,
 			compactText: searchProjection.compactText,
 			compactPositions: searchProjection.compactPositions,
+			get wideCompactText() {
+				return getWideCompact().text;
+			},
+			get wideCompactPositions() {
+				return getWideCompact().positions;
+			},
 		};
 	};
 
@@ -3430,7 +3663,7 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		let start = 0;
 		for (let index = 0; index < text.length; index += 1) {
 			const character = text[index];
-			if (![".", "!", "?", ";", ":"].includes(character)) continue;
+			if (![".", "!", "?", ";", ":", "。", "！", "？", "；", "：", "؟", "۔", "।"].includes(character)) continue;
 			const end = index + 1;
 			if (end > start) ranges.push([start, end]);
 			start = end;
@@ -3446,19 +3679,18 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			if (position && !positionToTextIndex.has(position)) positionToTextIndex.set(position, index);
 		});
 		const tokens = [];
-		const pattern = /[a-z0-9]{2,}/g;
-		let match;
-		while ((match = pattern.exec(mappedText.searchText || ""))) {
-			const token = match[0];
-			const startPosition = mappedText.searchPositions?.[match.index];
-			const endPosition = mappedText.searchPositions?.[pattern.lastIndex - 1];
+		for (const { token, start, end } of scanSearchTokens(mappedText.searchText)) {
+			if (token.length < 2) continue;
+			const startPosition = mappedText.searchPositions?.[start];
+			const endPosition = mappedText.searchPositions?.[end - 1];
 			const startIndex = positionToTextIndex.get(startPosition);
 			const endIndex = positionToTextIndex.get(endPosition);
 			if (!Number.isFinite(startIndex) || !Number.isFinite(endIndex)) continue;
 			tokens.push({
 				token,
 				startIndex,
-				endIndex: endIndex + 1,
+				// Past the whole last character, which is two units when astral.
+				endIndex: endIndex + Math.max(1, (endPosition?.endOffset ?? 0) - (endPosition?.offset ?? 0)),
 			});
 		}
 		return tokens;
@@ -3486,7 +3718,10 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		}
 		return previous[rightTokens.length];
 	};
-	const SENTENCE_BREAK_PATTERN = /[.!?]["'”’)\]]*\s+["'“‘(]?[A-Z]/;
+	// A sentence end followed by the start of another: Latin-style punctuation
+	// before a capital (or a letter of a script without case), or the full
+	// stops of Chinese and Japanese, Arabic, Urdu and Hindi before more text.
+	const SENTENCE_BREAK_PATTERN = /[.!?]["'”’»)\]]*\s+["'“‘«(]?[\p{Lu}\p{Lo}]|[。！？؟۔।]["'”’」』）)\]]*\s*[\p{L}\p{N}"'“‘「『（(]/u;
 	const approximateCandidateReadsLikeQuery = (queryTokens, query, candidateText) => {
 		if (SENTENCE_BREAK_PATTERN.test(candidateText) && !SENTENCE_BREAK_PATTERN.test(String(query || ""))) return false;
 		if (queryTokens.length < 4) return true;
@@ -3504,9 +3739,16 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		const pageTokens = buildSearchTokenRanges(mappedText).filter((entry) => entry.token.length >= 2);
 		if (!pageTokens.length) return null;
 
-		const maxWindowTokens = Math.min(32, Math.max(8, queryTokens.length + 10));
+		// A sentence in an unspaced script is one two-character piece per
+		// character, far more pieces than a spaced sentence has words, so its
+		// window is wider. Windows there start only on a piece of the quote: a
+		// window that starts on another piece always scores below the one that
+		// starts at its first match, and skipping it keeps long pages fast.
+		const unspacedQuery = queryTokens.some((token) => UNSPACED_SCRIPT_CHARACTER.test(token));
+		const maxWindowTokens = unspacedQuery ? Math.min(240, queryTokens.length + 10) : Math.min(32, Math.max(8, queryTokens.length + 10));
 		let best = null;
 		for (let startTokenIndex = 0; startTokenIndex < pageTokens.length; startTokenIndex += 1) {
+			if (unspacedQuery && !queryTokenSet.has(pageTokens[startTokenIndex].token)) continue;
 			const matched = new Set();
 			for (let endTokenIndex = startTokenIndex; endTokenIndex < pageTokens.length && endTokenIndex < startTokenIndex + maxWindowTokens; endTokenIndex += 1) {
 				const token = pageTokens[endTokenIndex].token;
@@ -3522,7 +3764,7 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 				const startIndex = pageTokens[startTokenIndex].startIndex;
 				const endIndex = pageTokens[endTokenIndex].endIndex;
 				const text = mappedText.text.slice(startIndex, endIndex).trim();
-				if (text.length < 12) continue;
+				if (text.length < (unspacedQuery ? 4 : 12)) continue;
 				const score = overlap * 150 + coverage * 80 + density * 45 + (hasPrimary ? 25 : 0) - text.length * 0.015;
 				if ((!best || score > best.score) && approximateCandidateReadsLikeQuery(queryTokens, query, text)) {
 					best = { startIndex, endIndex, overlap, coverage, score, text };
@@ -4201,6 +4443,9 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		const citationStrippedRaw = rawQuery.replace(/\[\s*(?:\d{1,3}|[a-z]|note\s+\d{1,3}|citation needed|edit)\s*\]/gi, " ");
 		const citationStrippedQuery = citationStrippedRaw === rawQuery ? "" : normalizeHighlightSearchText(citationStrippedRaw);
 		const citationStrippedCompactQuery = citationStrippedRaw === rawQuery ? "" : compactHighlightSearchText(citationStrippedRaw);
+		const wideCompactQuery = wideCompactHighlightSearchText(rawQuery);
+		const useWideCompactQuery = shouldUseWideCompactQuery(wideCompactQuery);
+		const citationStrippedWideCompactQuery = citationStrippedRaw === rawQuery ? "" : wideCompactHighlightSearchText(citationStrippedRaw);
 
 		const occurrence = Math.max(1, Math.min(20, Number(options.occurrence || 1) || 1));
 		const clearExisting = options.clearExisting === true;
@@ -4215,6 +4460,9 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			compactFallback,
 			citationStrippedQuery,
 			citationStrippedCompactQuery,
+			wideCompactQuery,
+			useWideCompactQuery,
+			citationStrippedWideCompactQuery,
 		};
 		ensureAnnotationStyles();
 			await waitForMathTypesetting(rawQuery);
@@ -4381,6 +4629,8 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 							compactQuery: compactHighlightSearchText(rowQueryText),
 							useCompactQuery: compactHighlightSearchText(rowQueryText).length >= 12,
 							compactFallback: "compact-text",
+							wideCompactQuery: wideCompactHighlightSearchText(rowQueryText),
+							useWideCompactQuery: shouldUseWideCompactQuery(wideCompactHighlightSearchText(rowQueryText)),
 						}
 					: highlightQueries;
 			// Cheap necessary condition before walking a row's text nodes, so a miss
@@ -4450,6 +4700,39 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 						approximate: true,
 						fallback: "table-row-cells",
 					});
+				}
+			}
+		}
+
+		// No prose container held the quote exactly. Look through the page's
+		// loose text (words set in bare <div>s and <span>s, definition lists,
+		// labels) before any fuzzy match gets to settle for a paragraph that
+		// merely shares some of the quote's words.
+		if (matchIndex === 0 && occurrence === 1) {
+			for (const block of collectLooseTextBlocks(highlightQueries, rawQuery)) {
+				const textNodes = collectHighlightTextNodes(block);
+				if (!textNodes.length) continue;
+				const mappedText = buildNormalizedTextMap(textNodes, { blockBoundaries: true });
+				for (const mode of buildExactHighlightModes(mappedText, highlightQueries)) {
+					const foundAt = mode.query ? mode.text.indexOf(mode.query) : -1;
+					if (foundAt === -1) continue;
+					const start = mode.positions[foundAt];
+					const end = mode.positions[foundAt + mode.query.length - 1];
+					if (!start || !end) continue;
+					const range = document.createRange();
+					range.setStart(start.node, start.offset);
+					range.setEnd(end.node, getRangeEndOffset(end));
+					return await highlightRange(range, rawQuery, {
+						scrollIntoView,
+						approximate: Boolean(mode.fallback),
+						fallback: mode.fallback,
+						anchorContext: extractHighlightAnchorContext(mode.text, foundAt, mode.query.length),
+						anchorOccurrence: occurrence,
+					});
+				}
+				const approximate = exactOnly ? null : findBestApproximateHighlightRange(mappedText, rawQuery);
+				if (approximate && (!bestApproximateMatch || approximate.score > bestApproximateMatch.score)) {
+					bestApproximateMatch = { ...approximate, mappedText, container: block };
 				}
 			}
 		}
@@ -4552,6 +4835,25 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			}
 		}
 
+		// The words may be in the page but not showing (a collapsed section, an
+		// inactive tab panel). Say so: asking again for the same passage can't
+		// work, and each retry costs the reader a model round.
+		const hiddenBlock = occurrence === 1 ? findHiddenHighlightText(highlightQueries) : null;
+		if (hiddenBlock) {
+			// A closed <details> is the page's own "show more": open it and look again.
+			const closedDetails = [];
+			for (let details = hiddenBlock.closest("details:not([open])"); details; details = details.parentElement?.closest("details:not([open])")) {
+				closedDetails.push(details);
+			}
+			if (closedDetails.length && !options.openedDetails) {
+				for (const details of closedDetails) details.open = true;
+				await waitForLayout();
+				return await highlightText(query, { ...options, openedDetails: true });
+			}
+			// No quote in this message: unlike "No visible text matched: …",
+			// nothing downstream strips page text from it.
+			throw new Error("That text is on the page but hidden (in a collapsed or inactive section), so it cannot be highlighted.");
+		}
 		throw new Error(`No visible text matched: ${query}`);
 	};
 
@@ -4659,6 +4961,29 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			blocks.push(block);
 			totalChars += block.text.length;
 			if (blocks.length >= maxBlocks || totalChars >= maxChars) break;
+		}
+
+		// A page whose words sit outside those tags (a web app, a course site, a
+		// form) showed up here as empty, so the model started every answer
+		// without the text on screen. Add the loose text in view, block by block.
+		if (blocks.length < maxBlocks && totalChars < maxChars) {
+			let added = false;
+			for (const [element, rawText] of collectLooseTextGroups()) {
+				if (blocks.length >= maxBlocks || totalChars >= maxChars) break;
+				const text = normalizeText(rawText);
+				if (text.length < 12 || !isVisible(element)) continue;
+				const rect = element.getBoundingClientRect();
+				if (rect.bottom <= viewportTop || rect.top >= viewportBottom) continue;
+				const selector = buildSelector(element);
+				if (!selector || seen.has(selector)) continue;
+				seen.add(selector);
+				const block = { tag: element.tagName.toLowerCase(), selector, text: text.slice(0, 500), top: rect.top, bottom: rect.bottom, isHeading: false };
+				blocks.push(block);
+				totalChars += block.text.length;
+				added = true;
+			}
+			// Back into reading order, top of the viewport first.
+			if (added) blocks.sort((left, right) => left.top - right.top);
 		}
 
 		const visibleText = [];

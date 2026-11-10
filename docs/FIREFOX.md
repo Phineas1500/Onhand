@@ -60,6 +60,8 @@ Tests over WebDriver BiDi with system access also confirmed the real sidebar:
 - it shows `sidepanel.html`;
 - ⌘⇧Space (Ctrl+Shift+Space elsewhere) is registered for `_execute_sidebar_action`.
 
+The page toolkit's highlight matching can be checked in Firefox's engine without the add-on: `npm run test:page-toolkit-sweep -- --port <port> --bidi --perturb` (see `docs/TESTING_WORKFLOW.md`). On 2026-11-09 it gave the same results in Gecko 158 as in Chromium on all 29 pages.
+
 Automated runs should seed the Onhand Free test-device token (`ONHAND_FREE_TIER_TEST_TOKEN`) and tag prompts with a test source, as the Chrome launch scripts do. Otherwise every fresh profile registers a new Free device.
 
 Chrome's CI suites and the live acceptance suite also passed on the same branch.

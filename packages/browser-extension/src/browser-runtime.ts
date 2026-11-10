@@ -1530,9 +1530,17 @@ function stripShortLeadingHighlightLabel(value: unknown) {
 	const text = normalizeHighlightRetryCandidate(value);
 	const match = text.match(/^([^:\n]{2,70}):\s+(.{16,})$/u);
 	if (!match) return text;
-	const labelWords = match[1].match(/[A-Za-z][A-Za-z]{2,}/g) || [];
+	const labelWords = match[1].match(/\p{L}{3,}/gu) || [];
 	if (labelWords.length > 6) return text;
 	return match[2].trim();
+}
+
+// Chinese, Japanese and Thai are written without spaces, so a quote in them
+// has no words to count: a handful of characters carries what several words do.
+const UNSPACED_SCRIPT_LETTER_PATTERN = /[\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Thai}]/gu;
+
+function unspacedScriptLetterCount(value: unknown) {
+	return (String(value || "").match(UNSPACED_SCRIPT_LETTER_PATTERN) || []).length;
 }
 
 function cleanMarkdownHeadingHighlightText(value: unknown) {
@@ -1661,6 +1669,14 @@ function isFormulaOnlyHighlightText(value: unknown) {
 const FORMULA_HIGHLIGHT_MISS_MESSAGE =
 	"No visible text matched that formula: rendered math rarely reads back as the same text. Highlight the sentence that introduces or names the formula instead.";
 
+// The page toolkit reports a quote that is in the page but not showing (a
+// collapsed section, an inactive tab panel). No rewording of it can land, so
+// its fragments aren't tried and the model is told to move on: every retry
+// costs the reader a model round.
+const HIDDEN_HIGHLIGHT_TEXT_PATTERN = /on the page but hidden/i;
+const HIDDEN_HIGHLIGHT_MISS_MESSAGE =
+	"That passage is on the page but hidden (in a collapsed or inactive section), so it cannot be highlighted. Do not ask for it again: highlight a passage that is showing instead, or make the point without a mark.";
+
 function buildHighlightRetryCandidates(value: unknown) {
 	const raw = String(value || "").trim();
 	if (!raw) return [];
@@ -1672,9 +1688,14 @@ function buildHighlightRetryCandidates(value: unknown) {
 	const candidates: string[] = [];
 	const addCandidate = (candidate: unknown) => {
 		const normalized = normalizeHighlightRetryCandidate(candidate);
-		if (normalized.length < 16 || normalized.length > HIGHLIGHT_RETRY_MAX_CHARS) return;
-		const wordTokens = normalized.match(/[A-Za-z][A-Za-z]{2,}/g) || [];
-		if (wordTokens.length < 3) return;
+		// A fragment needs enough words to point at one place: three of them,
+		// in any alphabet, or eight characters of a script without spaces.
+		// (Counting only A-Z words left quotes in every other script with no
+		// fragments to retry.)
+		const unspacedLetters = unspacedScriptLetterCount(normalized);
+		if (normalized.length < (unspacedLetters >= 8 ? 8 : 16) || normalized.length > HIGHLIGHT_RETRY_MAX_CHARS) return;
+		const wordTokens = normalized.match(/\p{L}{3,}/gu) || [];
+		if (wordTokens.length < 3 && unspacedLetters < 8) return;
 		if (normalized.toLowerCase() === normalizeHighlightRetryCandidate(raw).toLowerCase()) return;
 		if (!candidates.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) candidates.push(normalized);
 	};
@@ -1693,7 +1714,7 @@ function buildHighlightRetryCandidates(value: unknown) {
 	if (!hasListShape || !hasMultipleLines) {
 		const normalizedRaw = normalizeHighlightRetryCandidate(raw);
 		const parts = normalizedRaw
-			.split(/(?<=[!?;:])\s+|(?<!r\.v\.)(?<!e\.g\.)(?<!i\.e\.)(?<=[.])\s+|\s+[–—-]\s+/iu)
+			.split(/(?<=[!?;:])\s+|(?<!r\.v\.)(?<!e\.g\.)(?<!i\.e\.)(?<=[.])\s+|\s+[–—-]\s+|(?<=[。！？；])\s*|(?<=[؟۔।])\s+/iu)
 			.map((part) => part.trim())
 			.filter(Boolean);
 		for (const part of parts) {
@@ -1980,11 +2001,24 @@ function buildRepeatedToolFailureAnswerNowGuardResult(toolName: string, commandN
 
 // A coarse, content-free reason for a failed tool step, for telemetry: the
 // kind of failure only, never page text, arguments, or the error message.
-function classifyToolFailureTrace(trace: any) {
+function classifyToolFailureTrace(trace: any, context: { pdf?: boolean } = {}) {
 	const text = String(trace?.error || trace?.resultSummary || "").toLowerCase();
 	if (isGuardrailBlockedTrace(trace) || text.startsWith("guardrail blocked")) return "guard";
 	if (/timed? ?out|timeout|took too long/.test(text)) return "timeout";
-	if (/no (visible )?text matched|not found on (the )?page|could not (find|locate)|no match/.test(text)) return "no_match";
+	if (/on the page but hidden/.test(text)) return "hidden";
+	if (/no (visible )?(pdf |readable )?text matched|not found on (the )?page|could not (find|locate)|no match/.test(text)) {
+		if (trace?.toolName !== "browser_highlight_text") return "no_match";
+		if (/matched that formula/.test(text)) return "formula";
+		// A missed highlight says which kind of miss it was, still without any
+		// of the text: "weak" when the page's closest passage shares only part
+		// of the quote (the quote wasn't the page's words), "_pdf" on a PDF, and
+		// "_nl" when the quote wasn't in Latin script.
+		const base = /closest text only shares part/.test(text) ? "weak" : "no_match";
+		const quote = String(trace?.args?.text || trace?.effectiveArgs?.text || "");
+		const pdf = context.pdf || Boolean(trace?.args?.pdfAnchor || trace?.effectiveArgs?.pdfAnchor) || /\bpdf\b/.test(text.split(":")[0]);
+		const nonLatin = (quote.match(/[^\P{L}\p{Script=Latin}]/gu) || []).length > (quote.match(/\p{Script=Latin}/gu) || []).length;
+		return `${base}${pdf ? "_pdf" : ""}${nonLatin ? "_nl" : ""}`;
+	}
 	if (/no tab with id|tab (was )?closed|tab not found|invalid tab/.test(text)) return "tab";
 	if (/receiving end does not exist|could not establish connection|frame (was )?removed|context invalidated|no frame/.test(text)) return "unreachable";
 	if (/cannot access|cannot be scripted|chrome:\/\/|chrome-extension:\/\/|restricted|permission|not allowed/.test(text)) return "restricted";
@@ -1998,11 +2032,11 @@ const TOOL_FAILURE_REASONS_MAX_CHARS = 160;
 
 // "highlight_text:no_match*3,read_page:timeout*1": failures by tool and
 // reason, most frequent first, cut at whole entries to fit the column.
-function summarizeToolFailureReasons(traces: any[] = []) {
+function summarizeToolFailureReasons(traces: any[] = [], context: { pdf?: boolean } = {}) {
 	const counts = new Map<string, number>();
 	for (const trace of traces) {
 		if (trace?.state !== "error" || !trace.toolName) continue;
-		const key = `${String(trace.toolName).replace(/^browser_/, "")}:${classifyToolFailureTrace(trace)}`;
+		const key = `${String(trace.toolName).replace(/^browser_/, "")}:${classifyToolFailureTrace(trace, context)}`;
 		counts.set(key, (counts.get(key) || 0) + 1);
 	}
 	let summary = "";
@@ -5536,7 +5570,12 @@ function normalizeEntityText(value: unknown) {
 	return String(value || "")
 		.toLowerCase()
 		.normalize("NFKD")
-		.replace(/[^\p{L}\p{N}]+/gu, " ")
+		// An accent folds into its letter ("résumé" reads as "resume"), and a
+		// mark that is part of a word in another script (a Hindi vowel sign)
+		// stays in it. Every mark once became a space, which cut such words
+		// into pieces too short to count ("re sume").
+		.replace(/[̀-ͯ]/g, "")
+		.replace(/[^\p{L}\p{M}\p{N}]+/gu, " ")
 		.replace(/\s+/g, " ")
 		.trim();
 }
@@ -11058,6 +11097,12 @@ function looksLikeWeakCompactTeachingHighlightText(value: unknown, request: any)
 	const title = normalizeEntityText(request?.initialActiveTab?.title || "");
 	if (title && normalized === title) return true;
 	const words = entityWords(text);
+	// A full sentence is not a heading. The verb test below knows a few
+	// English verbs only, so it took whole sentences for headings whenever
+	// they held a dash or a colon and none of those verbs: most sentences in
+	// other languages ("प्रकाश-संश्लेषण वह क्रिया है…"), and English ones too.
+	const endsLikeSentence = /[.!?。！？؟۔।]["”'’»」)]?$/.test(text);
+	if (endsLikeSentence && (words.length >= 5 || unspacedScriptLetterCount(text) >= 12)) return false;
 	const hasVerb = /\b(?:is|are|means|shows|uses|treats|samples?|draws?|converts?|provides?|returns?|takes?|allows?|works?|captures?|represents?|defines?|explains?)\b/i.test(text);
 	if (words.length <= 10 && !hasVerb && /[:|&–—-]/.test(text)) return true;
 	return false;
@@ -11502,7 +11547,10 @@ function splitReadablePhraseCandidates(value: unknown) {
 	// footnote that PDF text places right after a sentence ("...limited training
 	// data. ∗Equal contribution."): its marker starts a new candidate.
 	const sentenceCandidates = text
-		.split(/(?<=[.!?])\s*(?:\[\d{1,3}\]\s*)?\s+(?=[A-Z0-9"“])|(?<=[.!?]\s*\[\d{1,3}\])\s+(?=[A-Z0-9"“])|(?<=[.!?])\s+(?=[∗†‡§¶*]\s*[A-Z])/)
+		// A sentence starts with a capital, a digit, a quote mark or a letter of
+		// a script without case; Chinese, Japanese, Arabic, Urdu and Hindi end
+		// theirs with their own full stops.
+		.split(/(?<=[.!?])\s*(?:\[\d{1,3}\]\s*)?\s+(?=[\p{Lu}\p{Lo}\p{N}"“«„「])|(?<=[.!?]\s*\[\d{1,3}\])\s+(?=[\p{Lu}\p{Lo}\p{N}"“«„「])|(?<=[.!?])\s+(?=[∗†‡§¶*]\s*[\p{Lu}\p{Lo}])|(?<=[。！？])\s*(?=\S)|(?<=[؟۔।])\s+/u)
 		.map((candidate) => candidate.trim())
 		.filter(Boolean);
 	const seeds = sentenceCandidates.length ? sentenceCandidates : [text];
@@ -11655,7 +11703,13 @@ function stripDisplayMathDelimiters(value: unknown) {
 
 function looksLikeCompleteSentence(value: unknown) {
 	const text = String(value || "").trim();
-	return /^["“'‘(]?[A-Z0-9]/.test(text) && /[.!?]["”'’)]?$/.test(text) && highlightRetryWordCount(text) >= 5;
+	// In any script: it starts like a sentence (a capital, or a letter of a
+	// script without case), ends with that script's full stop, and is long enough.
+	return (
+		/^["“'‘«„「(]?[\p{Lu}\p{Lo}\p{N}]/u.test(text) &&
+		/[.!?。！？؟۔।]["”'’»」)]?$/.test(text) &&
+		(highlightRetryWordCount(text) >= 5 || unspacedScriptLetterCount(text) >= 10)
+	);
 }
 
 function shouldKeepExactHighlightPhrase(value: unknown) {
@@ -12135,6 +12189,10 @@ export const __browserRuntimeTest = {
 	finalizePublicActivitiesForTest: finalizePublicActivities,
 	queueBlankReplyRetryForTest: queueBlankReplyRetry,
 	summarizeToolReliabilityForTest: summarizeToolReliability,
+	buildHighlightRetryCandidatesForTest: buildHighlightRetryCandidates,
+	looksLikeWeakCompactTeachingHighlightTextForTest: looksLikeWeakCompactTeachingHighlightText,
+	looksLikeCompleteSentenceForTest: looksLikeCompleteSentence,
+	splitReadablePhraseCandidatesForTest: splitReadablePhraseCandidates,
 	getSelectionText,
 	getSelectionPageNumber,
 	inferPdfPageNumberFromBrowserContextDetails,
@@ -12704,6 +12762,9 @@ function createTools(
 					if (commandName !== "highlight_text") throw error;
 					if (isFormulaOnlyHighlightText((params as any)?.text) && /No visible text matched/i.test(String((error as any)?.message || error))) {
 						throw new Error(FORMULA_HIGHLIGHT_MISS_MESSAGE);
+					}
+					if (HIDDEN_HIGHLIGHT_TEXT_PATTERN.test(String((error as any)?.message || error))) {
+						throw new Error(HIDDEN_HIGHLIGHT_MISS_MESSAGE);
 					}
 					const attemptedCandidateKeys = new Set<string>();
 					for (const candidate of buildHighlightRetryCandidates((params as any)?.text)) {
@@ -13470,7 +13531,12 @@ function finalizePublicActivities(activities: UiActivity[] = [], finalError: Err
 	});
 }
 
-function summarizeToolReliability(activities: UiActivity[] = [], pageActions: PageAction[] = [], toolTraces: ToolTraceEntry[] = []) {
+function summarizeToolReliability(
+	activities: UiActivity[] = [],
+	pageActions: PageAction[] = [],
+	toolTraces: ToolTraceEntry[] = [],
+	context: { pdf?: boolean } = {},
+) {
 	const publicActivities = getPublicActivities(activities);
 	const pageActionCount = Array.isArray(pageActions) ? pageActions.length : 0;
 	const failedStates = new Set(["retrying", "recovered", "error"]);
@@ -13481,7 +13547,7 @@ function summarizeToolReliability(activities: UiActivity[] = [], pageActions: Pa
 		tool_failure_count: publicActivities.filter((activity) => failedStates.has(activity.state || "")).length,
 		recovered_tool_failure_count: publicActivities.filter((activity) => activity.state === "recovered").length,
 		final_tool_failure_count: publicActivities.filter((activity) => activity.state === "error").length,
-		tool_failure_reasons: summarizeToolFailureReasons(traces),
+		tool_failure_reasons: summarizeToolFailureReasons(traces, context),
 		// Summed per call, so parallel calls can add up to more than the turn.
 		tool_duration_ms: traces.reduce((total, trace) => total + traceMs(trace), 0),
 		failed_tool_duration_ms: traces.filter((trace) => trace?.state === "error").reduce((total, trace) => total + traceMs(trace), 0),
@@ -13931,7 +13997,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			return /source not found|saved source text is not currently loaded|no annotation found|no visible text matched/.test(message);
 		}
 		if (/^sidebar:(?:realtime-)?browser-tool$/.test(messageType)) {
-			return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no visible (?:pdf )?text matched|no image or figure matched/.test(message);
+			return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no (?:visible|readable) (?:pdf )?text matched|on the page but hidden|no image or figure matched/.test(message);
 		}
 		// A PDF link that no longer exists is the source site's problem.
 		if (messageType === "pdf-viewer:load-authorized-source" && /\(http (?:404|410)\)/.test(message)) return true;
@@ -13950,7 +14016,8 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		text = text
 			.replace(/(Source not found on this page:)\s*[\s\S]+/gi, "$1 [redacted text]")
 			.replace(/(Saved source text is not currently loaded in this page:)\s*[\s\S]+/gi, "$1 [redacted text]")
-			.replace(/(No visible (?:PDF )?text matched:)\s*[\s\S]+/gi, "$1 [redacted text]")
+			.replace(/(No (?:visible|readable) (?:PDF )?text matched:)\s*[\s\S]+/gi, "$1 [redacted text]")
+			.replace(/(so it cannot be highlighted:)\s*[\s\S]+/gi, "$1 [redacted text]")
 			.replace(/(No visible interactive element matched text:)\s*[\s\S]+/gi, "$1 [redacted text]")
 			.replace(/(No editable field matched label:)\s*[\s\S]+/gi, "$1 [redacted label]")
 			.replace(/(No element matches selector:|no longer exists for selector:)\s*[\s\S]+/gi, "$1 [redacted selector]")
@@ -15776,7 +15843,11 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		}
 		await autoPersistReviewSnapshot(session, activeRequest, finalError);
 		const publicActivities = finalizePublicActivities(uiState?.activities || [], finalError);
-		const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || [], activeRequest.toolTraces || []);
+		// Whether the question was asked on a PDF (its address is never sent):
+		// a missed highlight there is a different problem from one on a web page.
+		const askedOnPdf = askFeatureNames({ url: activeRequest.initialActiveUrl }).includes("ask_on_pdf") ||
+			(activeRequest.toolTraces || []).some((trace: any) => /^browser_(?:pdf_|open_pdf_)/.test(String(trace?.toolName || "")));
+		const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || [], activeRequest.toolTraces || [], { pdf: askedOnPdf });
 		const errorReport = finalError ? buildErrorReportSnapshot(finalError, activeRequest, publicActivities) : null;
 		const startedAtMs = Date.parse(activeRequest.createdAt || "");
 		const turn: UiTurn = {

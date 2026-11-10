@@ -8,6 +8,7 @@ import { runWelcomeOpenRegressions } from "./lib/welcome-open-regressions.mjs";
 import { runFeatureUsageRegressions } from "./lib/feature-usage-regressions.mjs";
 import { runContextMenuRegressions } from "./lib/context-menu-regressions.mjs";
 import { runSessionNotesRegressions } from "./lib/session-notes-regressions.mjs";
+import { runHighlightMissRegressions } from "./lib/highlight-miss-regressions.mjs";
 import assert from "node:assert/strict";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
@@ -1391,6 +1392,16 @@ async function assertSentryDiagnosticsGateAndScrub() {
 				label: "voice figure miss",
 				messageType: "sidebar:realtime-browser-tool",
 				message: 'No image or figure matched "diagram". Figures on this page include: "Schematic".',
+			},
+			{
+				label: "voice highlight of hidden text",
+				messageType: "sidebar:realtime-browser-tool",
+				message: "That text is on the page but hidden (in a collapsed or inactive section), so it cannot be highlighted.",
+			},
+			{
+				label: "voice highlight in a PDF with unreadable pages",
+				messageType: "sidebar:browser-tool",
+				message: "PDF text search is incomplete: could not read pages 2. No readable text matched: a private sentence",
 			},
 			{
 				label: "daily Free limit",
@@ -13457,6 +13468,7 @@ async function main() {
 	await runFeatureUsageRegressions({ installChromeStorageStub, createReplayHost });
 	await runContextMenuRegressions();
 	await runSessionNotesRegressions({ installChromeStorageStub });
+	await runHighlightMissRegressions({ installChromeStorageStub });
 	await assertPreparationCanBeStoppedWithoutLateContinuation();
 	await assertColdSubmissionAndSessionTransitionsAreExclusive();
 	await assertStorageFailuresDoNotWedgeRequests();

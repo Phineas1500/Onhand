@@ -2123,9 +2123,109 @@ async function assertZeroViewportTabStillHighlights() {
 
 	const laidOut = await createToolkit(html);
 	zeroWide(laidOut.dom.window, 1200);
-	await assert.rejects(() => laidOut.toolkit.highlightText("Treat logs as event streams that the execution environment collects."), /No visible text matched/, "with a viewport, zero-width text stays hidden");
+	// The words are in the page, so the error says they are hidden, which tells
+	// the model not to ask for the same passage again.
+	await assert.rejects(() => laidOut.toolkit.highlightText("Treat logs as event streams that the execution environment collects."), /That text is on the page but hidden/, "with a viewport, zero-width text stays hidden");
 	laidOut.dom.window.close();
 	console.log("A tab reloaded without a viewport still highlights passed");
+}
+
+// Many sites set their words in bare <div>s and <span>s (web apps, course
+// sites, forms) or in definition lists and labels. A quote from there matched
+// no prose container, so every highlight on such a page failed, however exact
+// the quote, and a fuzzy match could settle for a paragraph sharing its words.
+async function assertLooseTextOutsideProseContainersHighlights() {
+	const html = `<!doctype html><html><body><main>
+		<p>A paragraph that mentions enzymes and activation energy and a chemical reaction only in passing.</p>
+		<div class="card"><span>Enzymes lower the activation energy</span> <b>of a chemical reaction</b><span> so it runs faster.</span></div>
+		<dl><dt>Osmosis</dt><dd>The movement of water across a selectively permeable membrane.</dd></dl>
+		<label>Choose the answer that best describes cellular respiration.</label>
+		<section><div>Intro words end here</div><div>Second block begins after the intro.</div></section>
+		<button>Reveal the worked solution for this practice problem</button>
+		<div class="collapsed" style="display:none">Chlorophyll absorbs mostly red and blue wavelengths of light.</div>
+	</main></body></html>`;
+	const { dom, toolkit } = await createToolkit(html);
+	const { document } = dom.window;
+	const markFor = (annotation) => document.querySelector(`[data-onhand-annotation-id="${annotation.annotationId}"]`);
+
+	// The text on screen includes those words too; it used to list only the paragraph.
+	const visible = toolkit.getVisibleText().text;
+	assert.match(visible, /Enzymes lower the activation energy of a chemical reaction so it runs faster\./);
+	assert.match(visible, /The movement of water across a selectively permeable membrane\./);
+	assert.match(visible, /Choose the answer that best describes cellular respiration\./);
+	assert.doesNotMatch(visible, /Reveal the worked solution|Chlorophyll absorbs/, "controls and hidden text are not page text");
+
+	const card = await toolkit.highlightText("Enzymes lower the activation energy of a chemical reaction so it runs faster.");
+	assert.equal(card.approximate, false, "an exact quote from a div is an exact match");
+	assert.ok(markFor(card).closest(".card"), "the mark is on the div's text, not the paragraph that shares its words");
+	assert.equal(card.matchedText, "Enzymes lower the activation energy of a chemical reaction so it runs faster.");
+
+	const definition = await toolkit.highlightText("The movement of water across a selectively permeable membrane.");
+	assert.ok(markFor(definition).closest("dd"), "definition-list text highlights");
+	const label = await toolkit.highlightText("Choose the answer that best describes cellular respiration.");
+	assert.ok(markFor(label).closest("label"), "label text highlights");
+
+	// Neighbouring blocks read as separate words, so a quote of the second starts cleanly.
+	const second = await toolkit.highlightText("Second block begins after the intro.");
+	assert.equal(second.matchedText, "Second block begins after the intro.");
+	assert.equal(markFor(second).closest("div").textContent, "Second block begins after the intro.");
+
+	await assert.rejects(() => toolkit.highlightText("Reveal the worked solution for this practice problem"), /No visible text matched/, "a control's label is not prose");
+	// Text that is in the page but not showing gets its own error, so the model stops asking for it.
+	// That error leaves out the quote: nothing downstream strips page text from it.
+	await assert.rejects(
+		() => toolkit.highlightText("Chlorophyll absorbs mostly red and blue wavelengths of light."),
+		(error) => /That text is on the page but hidden/.test(error.message) && !/chlorophyll/i.test(error.message),
+	);
+	await assert.rejects(() => toolkit.highlightText("A sentence that appears nowhere on this page at all."), /No visible text matched/);
+	dom.window.close();
+	console.log("Loose text outside prose containers highlights; hidden text says so passed");
+}
+
+// The punctuation-tolerant and fuzzy matches compared ASCII letters only, so
+// outside Latin script a quote had to match to the character: a Russian,
+// Arabic, Hindi or Japanese quote with other punctuation, a cut-off end or a
+// missing word found nothing, where the same English quote lands.
+async function assertFuzzyMatchingWorksOutsideLatinScript() {
+	const russian = "Таким образом, суммарный результат работы ФС II — это окисление двух молекул воды с помощью четырёх квантов света.";
+	const japanese = "光合成（こうごうせい）とは、光エネルギーを化学エネルギーに変換して生体に必要な有機物を作り出す反応過程である。";
+	const arabic = "يتغذى الحيوان والكائنات الحية الدقيقة الفطرية والبكتيريا على المنتجات النباتية.";
+	const hindi = "प्रकाश-संश्लेषण वह क्रिया है जिसमें पौधे सूर्य के प्रकाश की उपस्थिति में अपना भोजन बनाते हैं।";
+	const html = `<!doctype html><html><body><main>
+		<p>Первый абзац о хлорофилле и свете, который не относится к делу.</p>
+		<p id="ru">${russian}</p>
+		<p>葉緑体は植物の細胞にある小さな器官である。</p>
+		<p id="ja">${japanese}</p>
+		<p id="ar">${arabic}</p>
+		<p id="hi">${hindi}</p>
+		<p id="emoji">Great news 🎉 for readers: the café’s naïve résumé policy changed today.</p>
+	</main></body></html>`;
+	const cases = [
+		["ru", "Russian with the punctuation retyped away", "Таким образом суммарный результат работы ФС II это окисление двух молекул воды с помощью четырёх квантов света"],
+		["ru", "Russian with a word left out", "Таким образом, суммарный результат работы ФС II — это окисление молекул воды с помощью четырёх квантов света."],
+		["ru", "Russian cut off mid-word", "Таким образом, суммарный результат работы ФС II — это окисление двух молекул воды с помощью четырёх кван…"],
+		["ja", "Japanese with ASCII punctuation", "光合成(こうごうせい)とは,光エネルギーを化学エネルギーに変換して生体に必要な有機物を作り出す反応過程である"],
+		["ja", "Japanese cut off", "光合成（こうごうせい）とは、光エネルギーを化学エネルギーに変換して生体に必要な…"],
+		["ja", "Japanese reworded in two places", "光合成とは、光エネルギーを化学エネルギーに変換し、生体に必要な有機物を作り出す反応である。"],
+		["ar", "Arabic with a tatweel bullet and no full stop", "ـ يتغذى الحيوان والكائنات الحية الدقيقة الفطرية والبكتيريا على المنتجات النباتية"],
+		["ar", "Arabic with a word left out", "يتغذى الحيوان والكائنات الحية الفطرية والبكتيريا على المنتجات النباتية."],
+		["hi", "Hindi with a word left out", "प्रकाश-संश्लेषण वह क्रिया है जिसमें पौधे सूर्य के प्रकाश की उपस्थिति में भोजन बनाते हैं।"],
+	];
+	for (const [id, label, quote] of cases) {
+		const { dom, toolkit } = await createToolkit(html);
+		const annotation = await toolkit.highlightText(quote);
+		const mark = dom.window.document.querySelector(`[data-onhand-annotation-id="${annotation.annotationId}"]`);
+		assert.ok(mark?.closest(`#${id}`) || mark?.id === id, `${label} lands on its own sentence`);
+		dom.window.close();
+	}
+
+	// An emoji is two UTF-16 units; positions after it used to slip by one in
+	// the normalized pass, so the mark started and ended a character late.
+	const { dom, toolkit } = await createToolkit(html);
+	const afterEmoji = await toolkit.highlightText("for readers: the cafe's naive resume policy");
+	assert.equal(afterEmoji.matchedText, "for readers: the café’s naïve résumé policy", "a match after an emoji covers exactly its own words");
+	dom.window.close();
+	console.log("Fuzzy matching outside Latin script and positions after an emoji passed");
 }
 
 async function createToolkit(html, toolkitOptions = {}) {
@@ -3773,10 +3873,11 @@ async function assertPdfWrappedLineHighlightMatchesExactly() {
 
 async function assertOnhandViewerMapInjectsLineBoundaries() {
 	// Same contract for the Onhand viewer's own matcher (pdf-viewer bundle).
-	const [boundarySource, mapSource, charSource] = await Promise.all([
+	const [boundarySource, mapSource, charSource, searchableSource] = await Promise.all([
 		loadFunctionFromFile("packages/browser-extension/pdf-viewer.bundle.js", "pdfTextNodeBoundaryNeedsSpace"),
 		loadFunctionFromFile("packages/browser-extension/pdf-viewer.bundle.js", "buildNormalizedTextMap"),
 		loadFunctionFromFile("packages/browser-extension/pdf-viewer.bundle.js", "normalizeSearchChar"),
+		loadFunctionFromFile("packages/browser-extension/pdf-viewer.bundle.js", "isSearchableChar"),
 	]);
 	const dom = new JSDOM(
 		`
@@ -3790,6 +3891,7 @@ async function assertOnhandViewerMapInjectsLineBoundaries() {
 	setElementRect(dom.window.document.getElementById("line-2-tail"), { left: 270.4, top: 124, width: 140, height: 18 });
 	const map = dom.window.eval(`(() => {
 		${charSource}
+		${searchableSource}
 		${boundarySource}
 		${mapSource}
 		return buildNormalizedTextMap(document.querySelector(".textLayer"));
@@ -4709,6 +4811,8 @@ async function main() {
 	await assertWebCitationLookup();
 	await assertSearchResultLinks();
 	await assertZeroViewportTabStillHighlights();
+	await assertLooseTextOutsideProseContainersHighlights();
+	await assertFuzzyMatchingWorksOutsideLatinScript();
 
 	console.log("Page toolkit regressions: PASS");
 }

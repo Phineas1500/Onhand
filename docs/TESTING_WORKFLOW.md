@@ -50,6 +50,24 @@ The fixture matrix uses `npm run serve:fixture` and `http://127.0.0.1:8765/`. Th
 - Network collection with reload and `ignoreCache` captures the expected document or API request.
 - The session list, new session, switch session, rename, stop, and learning mode controls still work.
 
+## Highlight Sweeps
+
+Two model-free sweeps check that text Onhand reads can be highlighted, across many real pages. Run them after changing the page toolkit's matching (`createPageToolkit` in `background.js`) or the PDF viewer's (`src/pdf-viewer.ts`). They need a live browser and the network, so they are not in CI.
+
+```sh
+npm run test:page-toolkit-sweep -- --port <cdp port> --perturb
+npm run test:page-toolkit-sweep -- --port <bidi port> --bidi --perturb
+ONHAND_TEST_CDP_PORT=<port> npm run test:pdf-toolkit-sweep -- --perturb
+```
+
+- **Pages:** the page sweep covers articles, docs, math, tables, pages whose prose sits in bare `<div>`s, and Wikipedia in eleven languages (accents, right-to-left text, scripts without spaces).
+- **`--perturb`:** also highlights each page's first sentences the way a model tends to retype them: other punctuation, the end cut off with "…", a word left out. A mark that lands anywhere but its own sentence counts as a failure.
+- **`--bidi`:** drives the browser over WebDriver BiDi instead of CDP, which is how the sweep runs in Firefox's engine. Start Firefox (or another Gecko browser) with `--remote-debugging-port=<port>`, a throwaway `-profile` and `-no-remote`.
+- **`--background <path>`:** runs the toolkit from another copy of `background.js`, to compare two versions on the same pages.
+- **Known misses:** three verbatim spans on the Arabic and Chinese pages come from image-map labels and a collapsed navigation box, which extraction reads and highlighting skips.
+
+`evals/non-english/cases.json` is the model-in-the-loop counterpart: one question per language, asked in that language (`npm run eval:page-prompts -- --cases-file evals/non-english/cases.json`).
+
 ## Useful Commands
 
 ```sh
