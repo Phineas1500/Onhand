@@ -3742,6 +3742,70 @@ function collectSessionPageActions(session: RuntimeSession): PageAction[] {
 	});
 }
 
+// A session's highlights, notes and answers as Markdown, so a reader can keep
+// them outside Onhand (the panel menu's Copy notes and Download notes).
+// Highlights are grouped by the page they sit on, in the order they were made.
+function buildSessionNotesMarkdown(session: RuntimeSession, exportedAt: Date = new Date()) {
+	const firstQuestion = (Array.isArray(session.turns) ? session.turns : []).map((turn) => compactActionText(turn?.userPrompt)).find(Boolean) || "";
+	const namedTitle = compactActionText(session.name) || truncate(firstQuestion, 80);
+	const title = namedTitle || "Onhand notes";
+	const pages = new Map<string, { title: string; url: string; marks: ReplayAnnotation[] }>();
+	// Oldest turn first, so pages and marks read in the order they were made
+	// (session.pageActions holds the latest turn's, which the turns also carry).
+	const actions: PageAction[] = [];
+	const seenActionKeys = new Set<string>();
+	for (const action of [...(Array.isArray(session.turns) ? session.turns.flatMap((turn) => turn?.pageActions || []) : []), ...(Array.isArray(session.pageActions) ? session.pageActions : [])]) {
+		const key = action?.key || JSON.stringify(action || {});
+		if (seenActionKeys.has(key)) continue;
+		seenActionKeys.add(key);
+		actions.push(action);
+	}
+	for (const mark of buildReplayAnnotationsFromPageActions(actions)) {
+		// A PDF read in Onhand's viewer is listed under the PDF's own address.
+		const url = onhandPdfViewerSourceUrl(mark.url) || compactActionText(mark.url);
+		const pageTitle = compactActionText(mark.title);
+		const key = url || pageTitle.toLowerCase() || "page";
+		const page = pages.get(key) || { title: pageTitle, url, marks: [] };
+		if (!page.title && pageTitle) page.title = pageTitle;
+		page.marks.push(mark);
+		pages.set(key, page);
+	}
+	const lines: string[] = [`# ${title}`, "", `Notes from Onhand, ${exportedAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`];
+	let highlightCount = 0;
+	let noteCount = 0;
+	for (const page of pages.values()) {
+		lines.push("", `## ${page.title || page.url || "Page"}`);
+		if (/^https?:/i.test(page.url)) lines.push("", `<${page.url}>`);
+		for (const mark of page.marks) {
+			const text = stripReplayCitationMarkers(mark.matchedText || "");
+			if (!text) continue;
+			const pageNumber = Number(mark.pdfAnchor?.pageNumber || 0);
+			lines.push("", `> ${text}${Number.isFinite(pageNumber) && pageNumber > 0 ? ` (p. ${pageNumber})` : ""}`);
+			highlightCount += 1;
+			const note = stripReplayCitationMarkers(mark.noteText || "");
+			if (!note) continue;
+			lines.push("", `Note: ${note}`);
+			noteCount += 1;
+		}
+	}
+	const answered = (Array.isArray(session.turns) ? session.turns : []).filter(
+		(turn) => turn && !turn.pending && !turn.error && String(turn.reply || "").trim() && compactActionText(turn.userPrompt),
+	);
+	if (answered.length) lines.push("", "## Questions and answers");
+	for (const turn of answered) {
+		lines.push("", `### ${compactActionText(turn.userPrompt).replace(/^\[Voice\]\s*/i, "")}`, "", stripCitationProvenanceMarkers(turn.reply).trim());
+	}
+	const slug = namedTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/, "");
+	return {
+		title,
+		markdown: `${lines.join("\n")}\n`,
+		fileName: `onhand-notes${slug ? `-${slug}` : ""}.md`,
+		highlightCount,
+		noteCount,
+		questionCount: answered.length,
+	};
+}
+
 function buildExistingAnchorContext(session: RuntimeSession, maxAnchors = 8) {
 	const annotations = buildReplayAnnotationsFromPageActions(collectSessionPageActions(session));
 	if (!annotations.length) return "";
@@ -11887,6 +11951,7 @@ export const __browserRuntimeTest = {
 	deleteSessionRecordsForTest: deleteSessionRecords,
 	listBrowserArtifactsForTest: listBrowserArtifacts,
 	onhandPdfViewerSourceUrlForTest: onhandPdfViewerSourceUrl,
+	buildSessionNotesMarkdownForTest: buildSessionNotesMarkdown,
 	askFeatureNamesForTest: askFeatureNames,
 	isRestorablePageUrlForTest: isRestorablePageUrl,
 	onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
@@ -18124,6 +18189,15 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				replayableAnnotations,
 				selectedArtifactId: artifacts.at(-1)?.artifactId || null,
 			};
+		},
+
+		async exportSessionNotes(sessionId?: string) {
+			const store = await loadStore();
+			const targetSessionId = String(sessionId || store.currentSessionId || "").trim();
+			await ensureSessionLoaded(store, targetSessionId);
+			const session = store.sessions[targetSessionId] as RuntimeSession;
+			if (!session) throw new Error("Session not found.");
+			return buildSessionNotesMarkdown(session);
 		},
 
 		async getReplayArtifact(artifactId: string) {

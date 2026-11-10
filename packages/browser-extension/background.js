@@ -15836,6 +15836,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "sidebar:export-notes") {
+			const runtime = getOnhandBrowserRuntime();
+			const notes = await runtime.exportSessionNotes(typeof message.sessionPath === "string" ? message.sessionPath : "");
+			sendResponse({ ok: true, notes });
+			return;
+		}
+
 		if (message?.type === "sidebar:get-replay-artifact") {
 			const runtime = getOnhandBrowserRuntime();
 			const response = await runtime.getReplayArtifact(message.artifactId);

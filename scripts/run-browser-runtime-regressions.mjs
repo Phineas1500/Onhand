@@ -7,6 +7,7 @@ import { runTabWakeRegressions } from "./lib/tab-wake-regressions.mjs";
 import { runWelcomeOpenRegressions } from "./lib/welcome-open-regressions.mjs";
 import { runFeatureUsageRegressions } from "./lib/feature-usage-regressions.mjs";
 import { runContextMenuRegressions } from "./lib/context-menu-regressions.mjs";
+import { runSessionNotesRegressions } from "./lib/session-notes-regressions.mjs";
 import assert from "node:assert/strict";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
@@ -13455,6 +13456,7 @@ async function main() {
 	await runWelcomeOpenRegressions();
 	await runFeatureUsageRegressions({ installChromeStorageStub, createReplayHost });
 	await runContextMenuRegressions();
+	await runSessionNotesRegressions({ installChromeStorageStub });
 	await assertPreparationCanBeStoppedWithoutLateContinuation();
 	await assertColdSubmissionAndSessionTransitionsAreExclusive();
 	await assertStorageFailuresDoNotWedgeRequests();

@@ -90725,6 +90725,64 @@ function collectSessionPageActions(session) {
     return true;
   });
 }
+function buildSessionNotesMarkdown(session, exportedAt = /* @__PURE__ */ new Date()) {
+  const firstQuestion = (Array.isArray(session.turns) ? session.turns : []).map((turn) => compactActionText(turn?.userPrompt)).find(Boolean) || "";
+  const namedTitle = compactActionText(session.name) || truncate2(firstQuestion, 80);
+  const title = namedTitle || "Onhand notes";
+  const pages = /* @__PURE__ */ new Map();
+  const actions = [];
+  const seenActionKeys = /* @__PURE__ */ new Set();
+  for (const action of [...Array.isArray(session.turns) ? session.turns.flatMap((turn) => turn?.pageActions || []) : [], ...Array.isArray(session.pageActions) ? session.pageActions : []]) {
+    const key = action?.key || JSON.stringify(action || {});
+    if (seenActionKeys.has(key)) continue;
+    seenActionKeys.add(key);
+    actions.push(action);
+  }
+  for (const mark of buildReplayAnnotationsFromPageActions(actions)) {
+    const url = onhandPdfViewerSourceUrl(mark.url) || compactActionText(mark.url);
+    const pageTitle = compactActionText(mark.title);
+    const key = url || pageTitle.toLowerCase() || "page";
+    const page = pages.get(key) || { title: pageTitle, url, marks: [] };
+    if (!page.title && pageTitle) page.title = pageTitle;
+    page.marks.push(mark);
+    pages.set(key, page);
+  }
+  const lines = [`# ${title}`, "", `Notes from Onhand, ${exportedAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`];
+  let highlightCount = 0;
+  let noteCount = 0;
+  for (const page of pages.values()) {
+    lines.push("", `## ${page.title || page.url || "Page"}`);
+    if (/^https?:/i.test(page.url)) lines.push("", `<${page.url}>`);
+    for (const mark of page.marks) {
+      const text = stripReplayCitationMarkers(mark.matchedText || "");
+      if (!text) continue;
+      const pageNumber = Number(mark.pdfAnchor?.pageNumber || 0);
+      lines.push("", `> ${text}${Number.isFinite(pageNumber) && pageNumber > 0 ? ` (p. ${pageNumber})` : ""}`);
+      highlightCount += 1;
+      const note = stripReplayCitationMarkers(mark.noteText || "");
+      if (!note) continue;
+      lines.push("", `Note: ${note}`);
+      noteCount += 1;
+    }
+  }
+  const answered = (Array.isArray(session.turns) ? session.turns : []).filter(
+    (turn) => turn && !turn.pending && !turn.error && String(turn.reply || "").trim() && compactActionText(turn.userPrompt)
+  );
+  if (answered.length) lines.push("", "## Questions and answers");
+  for (const turn of answered) {
+    lines.push("", `### ${compactActionText(turn.userPrompt).replace(/^\[Voice\]\s*/i, "")}`, "", stripCitationProvenanceMarkers(turn.reply).trim());
+  }
+  const slug = namedTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/, "");
+  return {
+    title,
+    markdown: `${lines.join("\n")}
+`,
+    fileName: `onhand-notes${slug ? `-${slug}` : ""}.md`,
+    highlightCount,
+    noteCount,
+    questionCount: answered.length
+  };
+}
 function buildExistingAnchorContext(session, maxAnchors = 8) {
   const annotations = buildReplayAnnotationsFromPageActions(collectSessionPageActions(session));
   if (!annotations.length) return "";
@@ -96205,6 +96263,7 @@ var __browserRuntimeTest = {
   deleteSessionRecordsForTest: deleteSessionRecords,
   listBrowserArtifactsForTest: listBrowserArtifacts,
   onhandPdfViewerSourceUrlForTest: onhandPdfViewerSourceUrl,
+  buildSessionNotesMarkdownForTest: buildSessionNotesMarkdown,
   askFeatureNamesForTest: askFeatureNames,
   isRestorablePageUrlForTest: isRestorablePageUrl,
   onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
@@ -101783,6 +101842,14 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
         replayableAnnotations,
         selectedArtifactId: artifacts.at(-1)?.artifactId || null
       };
+    },
+    async exportSessionNotes(sessionId) {
+      const store2 = await loadStore();
+      const targetSessionId = String(sessionId || store2.currentSessionId || "").trim();
+      await ensureSessionLoaded(store2, targetSessionId);
+      const session = store2.sessions[targetSessionId];
+      if (!session) throw new Error("Session not found.");
+      return buildSessionNotesMarkdown(session);
     },
     async getReplayArtifact(artifactId) {
       const artifact = await getBrowserArtifact(artifactId);

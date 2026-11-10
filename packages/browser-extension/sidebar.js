@@ -162,6 +162,7 @@
 	let creatingSession = false;
 	let restoringSession = false;
 	let deletingSession = false;
+	let exportingNotes = false;
 	let openingPdfViewer = false;
 	let lastRestoreResult = null;
 	let stoppingRequest = false;
@@ -3795,6 +3796,8 @@
 									<button id="newSessionButton" class="session-button" type="button">New</button>
 									<button id="openPdfViewerButton" class="session-button" type="button">Open PDF</button>
 									<button id="restoreSessionButton" class="session-button" type="button">Restore pages</button>
+									<button id="copyNotesButton" class="session-button" type="button">Copy notes</button>
+									<button id="downloadNotesButton" class="session-button" type="button">Download notes</button>
 									<button id="optionsButton" class="session-button" type="button">Options</button>
 									<button id="deleteSessionButton" class="session-button delete-button" type="button">Delete</button>
 									<button id="closeButton" class="session-button" type="button">Close Onhand</button>
@@ -3909,6 +3912,8 @@
 	const newSessionButton = shadow.getElementById("newSessionButton");
 	const openPdfViewerButton = shadow.getElementById("openPdfViewerButton");
 	const restoreSessionButton = shadow.getElementById("restoreSessionButton");
+	const copyNotesButton = shadow.getElementById("copyNotesButton");
+	const downloadNotesButton = shadow.getElementById("downloadNotesButton");
 	const optionsButton = shadow.getElementById("optionsButton");
 	const deleteSessionButton = shadow.getElementById("deleteSessionButton");
 	const messagesEl = shadow.getElementById("messages");
@@ -4057,6 +4062,17 @@
 		return !hasPageActions && listed?.canRestore !== true;
 	}
 
+	// Notes are a session's highlights, notes and answers, so a session with
+	// neither an answered question nor a mark has none to copy or download.
+	function selectedSessionHasNothingToExport(state, selectedPath, currentPath, sessions) {
+		if (selectedPath !== currentPath) {
+			const listed = sessions.find((session) => (session?.path || session?.id || session?.sessionId || "") === selectedPath);
+			return listed ? !(Number(listed.turnCount) > 0 || Number(listed.highlightCount) > 0) : false;
+		}
+		const turns = Array.isArray(state?.turns) ? state.turns : [];
+		return !turns.some((turn) => turn && !turn.pending && !turn.error && String(turn.reply || "").trim());
+	}
+
 	function isFreshCurrentSession(state) {
 		if (!state?.currentSession) return false;
 		return !(
@@ -4122,6 +4138,15 @@
 		restoreSessionButton.disabled =
 			restoringSession || creatingSession || sessionSwitching || deletingSession || activeRequest || !currentPath || nothingToRestore;
 		restoreSessionButton.title = nothingToRestore ? "This session has no saved pages or highlights to restore yet." : "";
+		const nothingToExport = selectedSessionHasNothingToExport(state, selectedPath, currentPath, sessions);
+		for (const button of [copyNotesButton, downloadNotesButton]) {
+			button.disabled = exportingNotes || creatingSession || sessionSwitching || deletingSession || !currentPath || nothingToExport;
+			button.title = nothingToExport
+				? "This session has no highlights or answers yet."
+				: button === copyNotesButton
+					? "Copy this session's highlights, notes and answers as Markdown"
+					: "Save this session's highlights, notes and answers as a Markdown file";
+		}
 		const selectedSessionPath = getSelectedSessionPath();
 		deleteSessionButton.disabled = deletingSession || creatingSession || sessionSwitching || restoringSession || activeRequest || !selectedSessionPath;
 		deleteSessionButton.textContent = deletingSession ? "Deleting..." : "Delete";
@@ -8528,6 +8553,57 @@
 			});
 		});
 	});
+
+	// The session's highlights, notes and answers as Markdown (the runtime
+	// builds it), copied to the clipboard or saved as a file, so they can live
+	// in the reader's own notes.
+	async function exportSessionNotes(mode) {
+		assertSidebarConnected();
+		const download = mode === "download";
+		const button = download ? downloadNotesButton : copyNotesButton;
+		let done = false;
+		exportingNotes = true;
+		renderState(currentState || {});
+		try {
+			const response = await chrome.runtime.sendMessage({ type: "sidebar:export-notes", sessionPath: getSelectedSessionPath() });
+			if (!response?.ok || !response.notes?.markdown) throw new Error(response?.error || "Could not gather this session's notes.");
+			if (download) downloadTextFile(response.notes.fileName || "onhand-notes.md", response.notes.markdown);
+			else await copyTextToClipboard(response.notes.markdown);
+			trackFeature(download ? "notes_downloaded" : "notes_copied");
+			done = true;
+		} finally {
+			exportingNotes = false;
+			renderState(currentState || {});
+			button.textContent = done ? (download ? "Saved" : "Copied") : download ? "Download failed" : "Copy failed";
+			clearTimeout(button.__onhandNotesResetTimer);
+			button.__onhandNotesResetTimer = setTimeout(() => {
+				button.textContent = download ? "Download notes" : "Copy notes";
+			}, 1600);
+		}
+	}
+
+	function downloadTextFile(fileName, text) {
+		const url = URL.createObjectURL(new Blob([text], { type: "text/markdown;charset=utf-8" }));
+		const link = document.createElement("a");
+		link.href = url;
+		link.download = fileName;
+		link.style.display = "none";
+		(document.body || document.documentElement).appendChild(link);
+		link.click();
+		link.remove();
+		setTimeout(() => URL.revokeObjectURL(url), 30 * 1000);
+	}
+
+	for (const [button, mode] of [[copyNotesButton, "copy"], [downloadNotesButton, "download"]]) {
+		button.addEventListener("click", () => {
+			void exportSessionNotes(mode).catch((error) => {
+				renderState({
+					...(currentState || {}),
+					status: error?.message || String(error),
+				});
+			});
+		});
+	}
 
 	optionsButton.addEventListener("click", () => {
 		void openOnhandOptionsPage().catch((error) => {
