@@ -839,6 +839,66 @@ async function assertRejectedKeysAndFreeTierRegionAreExplained() {
 	console.log("Rejected API keys and an unserved Onhand Free region are explained passed");
 }
 
+// Registration takes about a second. Choosing Onhand Free again before it
+// answers (repeated clicks) used to register one device per click, each one
+// counting against the network's daily registrations.
+async function assertConcurrentFreeTierRegistrationsShareOneDevice() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const storage = globalThis.chrome.storage.local.data;
+	storage.onhandFreeTierBaseUrl = "https://free.test/v1";
+	const originalFetch = globalThis.fetch;
+	const originalSetTimeout = globalThis.setTimeout;
+	let registerResponse;
+	let registrations = 0;
+	globalThis.fetch = async (url) => {
+		if (String(url) === "https://free.test/v1/register") { registrations += 1; return registerResponse(registrations); }
+		return new Response("", { status: 200 });
+	};
+	const settle = () => new Promise((resolve) => originalSetTimeout(resolve, 20));
+	try {
+		const runtime = createOnhandBrowserRuntime(createReplayHost());
+		const choose = () => runtime.updateSettings({ aiProvider: "onhand-free", aiModel: "gpt-6-luna", authMode: "api-key" });
+
+		registerResponse = (count) => new Promise((resolve) => originalSetTimeout(() => resolve(Response.json({ token: `oft_device_${count}` })), 20));
+		const saved = await Promise.all([choose(), choose(), choose()]);
+		assert.equal(registrations, 1, "choices made while a registration is in flight share it");
+		assert.equal(storage.onhandFreeTierToken, "oft_device_1");
+		assert.deepEqual(saved.map((settings) => settings.aiProvider), ["onhand-free", "onhand-free", "onhand-free"]);
+
+		// A failed registration is not kept: the next choice tries again.
+		delete storage.onhandFreeTierToken;
+		registerResponse = () => Response.json({ error: { message: "Onhand Free registration is temporarily unavailable." } }, { status: 503 });
+		await Promise.all([choose(), choose()]);
+		assert.equal(registrations, 2, "a shared registration fails once for everyone waiting on it");
+		registerResponse = (count) => Response.json({ token: `oft_device_${count}` });
+		await choose();
+		assert.equal(storage.onhandFreeTierToken, "oft_device_3", "the next choice registers afresh");
+
+		// Setup waits 8 s for registration. Giving up ends the wait, not the
+		// registration: its token still lands and the next caller reuses it.
+		delete storage.onhandFreeTierToken;
+		let answer;
+		registerResponse = (count) => new Promise((resolve) => { answer = () => resolve(Response.json({ token: `oft_device_${count}` })); });
+		globalThis.setTimeout = (callback, ms, ...args) => originalSetTimeout(callback, ms === 8000 ? 1 : ms, ...args);
+		assert.equal((await choose()).aiProvider, "onhand-free", "a slow registration doesn't hold up choosing Onhand Free");
+		assert.equal((await choose()).aiProvider, "onhand-free");
+		assert.equal(storage.onhandFreeTierToken, undefined);
+		assert.equal(registrations, 4, "a choice made after the wait ran out still shares the registration");
+		answer();
+		await settle();
+		assert.equal(storage.onhandFreeTierToken, "oft_device_4", "the registration that outlived the wait stores its token");
+		await choose();
+		assert.equal(registrations, 4, "later saves reuse the token");
+	} finally {
+		globalThis.fetch = originalFetch;
+		globalThis.setTimeout = originalSetTimeout;
+		delete storage.onhandFreeTierBaseUrl;
+		delete storage.onhandFreeTierToken;
+	}
+	console.log("Concurrent Onhand Free registrations share one device passed");
+}
+
 async function assertExpiredChatGPTSignInAsksToSignInAgain() {
 	installChromeStorageStub();
 	globalThis.chrome.storage.local.data.onhandBrowserRuntime.settings = {
@@ -13495,6 +13555,7 @@ async function main() {
 	// After the Sentry gate check: choosing Onhand Free turns diagnostics on,
 	// and Sentry keeps the fetch it first starts with.
 	await assertRejectedKeysAndFreeTierRegionAreExplained();
+	await assertConcurrentFreeTierRegistrationsShareOneDevice();
 	await assertOAuthSignInSharesOneTabAndRecordsTimeoutPage();
 	await assertSelectionFormatting();
 	await assertDocumentReviewMarkupLane();

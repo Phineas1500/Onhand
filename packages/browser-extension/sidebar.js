@@ -167,6 +167,7 @@
 	let lastRestoreResult = null;
 	let stoppingRequest = false;
 	let authSigningIn = false;
+	let authFreeTierSettingUp = false;
 	let authStatusText = "";
 	let authStatusKind = "";
 	// A question asked before the first-run choice waits in the composer.
@@ -4209,11 +4210,11 @@
 			<div class="onhand-auth-title">${expiredTurn ? "Sign in again" : "Get started"}</div>
 			<p class="onhand-auth-copy${pendingAuthPrompt ? " pending" : ""}">${authCopy}</p>
 			<div class="onhand-auth-choices">
-				<button id="authFreeTierButton" class="onhand-auth-choice" type="button" ${authSigningIn ? "disabled" : ""}>
+				<button id="authFreeTierButton" class="onhand-auth-choice" type="button" ${authSigningIn || authFreeTierSettingUp ? "disabled" : ""}>
 					<span class="onhand-auth-choice-title">Try Onhand free</span>
 					<span class="onhand-auth-choice-copy">No account or key needed. Capped daily usage.</span>
 				</button>
-				<button id="authSignInButton" class="onhand-auth-choice" type="button" ${authSigningIn ? "disabled" : ""}>
+				<button id="authSignInButton" class="onhand-auth-choice" type="button" ${authSigningIn || authFreeTierSettingUp ? "disabled" : ""}>
 					<span class="onhand-auth-choice-title">${authSigningIn ? "Signing in..." : "Sign in with ChatGPT"}</span>
 					<span class="onhand-auth-choice-copy">Best quality with your ChatGPT Plus/Pro plan via Codex.</span>
 				</button>
@@ -4250,18 +4251,26 @@
 	}
 
 	async function chooseFreeTierFromSidebar() {
+		// Setup takes a second or so; another click meanwhile must not save again.
+		if (authFreeTierSettingUp) return;
+		authFreeTierSettingUp = true;
 		authStatusText = "Setting up Onhand Free...";
 		authStatusKind = "";
 		renderAuthPanel(currentState || {});
-		const response = await chrome.runtime.sendMessage({
-			type: "browser-runtime:update-settings",
-			authMode: "api-key",
-			aiProvider: "onhand-free",
-			aiModel: "gpt-6-luna",
-		});
-		if (!response?.ok) throw new Error(response?.error || "Could not enable the free tier.");
-		authStatusText = "";
-		await requestState();
+		try {
+			const response = await chrome.runtime.sendMessage({
+				type: "browser-runtime:update-settings",
+				authMode: "api-key",
+				aiProvider: "onhand-free",
+				aiModel: "gpt-6-luna",
+			});
+			if (!response?.ok) throw new Error(response?.error || "Could not enable the free tier.");
+			authStatusText = "";
+			await requestState();
+		} finally {
+			authFreeTierSettingUp = false;
+			renderAuthPanel(currentState || {});
+		}
 	}
 
 	function renderAttachmentDrafts() {

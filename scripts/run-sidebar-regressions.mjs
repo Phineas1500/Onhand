@@ -248,6 +248,9 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 					state.activities = [];
 					return { ok: true, deletedSessionId, currentSession: state.currentSession };
 				}
+				if (message?.type === "browser-runtime:update-settings" && typeof options.updateSettingsResponse === "function") {
+					return options.updateSettingsResponse(message, state);
+				}
 				if (message?.type === "sidebar:set-learning-mode") {
 					state.preferences = {
 						...(state.preferences || {}),
@@ -2345,6 +2348,49 @@ async function assertPromptBeforeFirstRunChoiceWaits() {
 	dom.window.close();
 }
 
+async function assertFreeTierSetupIgnoresRepeatClicks() {
+	// Setting up Onhand Free takes about a second. Clicking again meanwhile
+	// used to save the choice, and register a Free device, once per click.
+	const runtimeMessages = [];
+	const state = createState();
+	state.preferences.hasOAuthCredentials = false;
+	const firstSetup = createDeferred();
+	let setups = 0;
+	const dom = await renderSidebar(state, runtimeMessages, {
+		updateSettingsResponse: () => ((setups += 1) === 1 ? firstSetup.promise : { ok: true, settings: state.preferences }),
+	});
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	const panel = shadow.getElementById("authPanel");
+	const saves = () => runtimeMessages.filter((message) => message.type === "browser-runtime:update-settings");
+	const clickLabel = () => shadow.querySelector("#authFreeTierButton .onhand-auth-choice-title").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+
+	shadow.getElementById("authFreeTierButton").click();
+	await waitForSidebarTick(dom);
+	assert.equal(saves().length, 1);
+	assert.match(panel.textContent, /Setting up Onhand Free/);
+	assert.equal(shadow.getElementById("authFreeTierButton").disabled, true, "the Free choice is disabled while its setup runs");
+	assert.equal(shadow.getElementById("authSignInButton").disabled, true, "sign-in can't start in the middle of Free setup");
+	// A click that reaches the panel anyway is ignored too.
+	clickLabel();
+	clickLabel();
+	await waitForSidebarTick(dom);
+	assert.equal(saves().length, 1, "clicks during setup don't save the choice again");
+
+	firstSetup.resolve({ ok: false, error: "Could not reach the Onhand free tier." });
+	await waitForSidebarTick(dom);
+	await waitForSidebarTick(dom);
+	assert.match(panel.textContent, /Could not reach the Onhand free tier/);
+	assert.equal(shadow.getElementById("authFreeTierButton").disabled, false, "a failed setup can be tried again");
+	shadow.getElementById("authFreeTierButton").click();
+	await waitForSidebarTick(dom);
+	await waitForSidebarTick(dom);
+	assert.equal(saves().length, 2, "the retry saves once");
+	assert.equal(shadow.getElementById("authFreeTierButton").disabled, false);
+	dom.window.close();
+}
+
 async function assertFirstRunDiagnosticsIsOptIn() {
 	// Without diagnostics, ChatGPT sign-in and own-key installs are invisible;
 	// first run offers the switch, off unless ticked.
@@ -3495,6 +3541,7 @@ await assertRealtimeMicPickerConstrainsSelectedDevice();
 await assertRealtimeMicMuteControl();
 await assertRealtimeVoiceDisabledState();
 await assertPromptBeforeFirstRunChoiceWaits();
+await assertFreeTierSetupIgnoresRepeatClicks();
 await assertFirstRunDiagnosticsIsOptIn();
 await assertExpiredSignInOffersSignInAgain();
 await assertEmptyCitationMarkerIsNotShown();

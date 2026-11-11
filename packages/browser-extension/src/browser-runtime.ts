@@ -2658,18 +2658,47 @@ async function getFreeTierQuotaBypassSecret(): Promise<string> {
 	return String(stored[ONHAND_FREE_QUOTA_BYPASS_STORAGE_KEY] || "").trim();
 }
 
+const FREE_TIER_UNREACHABLE_MESSAGE = "Could not reach the Onhand free tier. Check your connection, or switch to your own API key in options.";
+// A registration that never answers must not hold every later attempt.
+const FREE_TIER_REGISTRATION_TIMEOUT_MS = 30_000;
+let freeTierRegistration: Promise<string> | null = null;
+
 // The free tier identifies devices with an anonymous token issued by the
 // proxy; no account or key is involved.
+// Callers that arrive while a registration is in flight share it. A repeated
+// click on "Try Onhand free", or a first question racing the settings save,
+// used to register one device each.
 async function getOrRegisterFreeTierToken(options: { timeoutMs?: number } = {}): Promise<string> {
 	const stored = await chrome.storage.local.get({ [ONHAND_FREE_TOKEN_STORAGE_KEY]: "" });
 	const existing = String(stored[ONHAND_FREE_TOKEN_STORAGE_KEY] || "");
 	if (existing) return existing;
+	freeTierRegistration ??= registerFreeTierToken().finally(() => {
+		freeTierRegistration = null;
+	});
+	const registration = freeTierRegistration;
+	if (!options.timeoutMs) return await registration;
+	// The caller's limit ends its own wait. The registration carries on, so
+	// its token is there for the next caller.
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			registration,
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(() => reject(new Error(FREE_TIER_UNREACHABLE_MESSAGE)), options.timeoutMs);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+async function registerFreeTierToken(): Promise<string> {
 	const baseUrl = await getFreeTierBaseUrl();
 	let response: Response;
 	try {
-		response = await fetch(`${baseUrl}/register`, { method: "POST", ...(options.timeoutMs ? { signal: AbortSignal.timeout(options.timeoutMs) } : {}) });
+		response = await fetch(`${baseUrl}/register`, { method: "POST", signal: AbortSignal.timeout(FREE_TIER_REGISTRATION_TIMEOUT_MS) });
 	} catch {
-		throw new Error("Could not reach the Onhand free tier. Check your connection, or switch to your own API key in options.");
+		throw new Error(FREE_TIER_UNREACHABLE_MESSAGE);
 	}
 	const data = await response.json().catch(() => null);
 	if (!response.ok) {
