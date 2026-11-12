@@ -1583,8 +1583,14 @@ const HIGHLIGHT_TOOL_CALL_TIMEOUT_MS = 12000;
 // page a few screens long outlasts the call's 12 s cap. Hitting the cap reads
 // as a stalled page (buildHighlightTimeoutTabGuardResult) and blocks every
 // later highlight on the tab, so the model-issued scan stops starting new
-// attempts here and reports the plain miss instead.
+// attempts here and reports the plain miss instead. The retry candidates stop
+// here too: on a slow computer each miss can take seconds, and a page that
+// keeps answering "not here" is slow, not stalled.
 const HIGHLIGHT_SCAN_DEADLINE_MS = 8000;
+
+function highlightRetryBudgetSpent(deadline: number, now = Date.now()) {
+	return deadline > 0 && now >= deadline;
+}
 // Notes/scrolls get the same total allowance as a highlight tool call: on a
 // backgrounded or CPU-starved renderer every page command legitimately runs
 // 2-6s, and the note is the turn's primary payload — a late note beats a lost
@@ -12306,6 +12312,7 @@ export const __browserRuntimeTest = {
 	queueBlankReplyRetryForTest: queueBlankReplyRetry,
 	summarizeToolReliabilityForTest: summarizeToolReliability,
 	buildHighlightRetryCandidatesForTest: buildHighlightRetryCandidates,
+	highlightRetryBudgetSpentForTest: highlightRetryBudgetSpent,
 	looksLikeWeakCompactTeachingHighlightTextForTest: looksLikeWeakCompactTeachingHighlightText,
 	looksLikeCompleteSentenceForTest: looksLikeCompleteSentence,
 	splitReadablePhraseCandidatesForTest: splitReadablePhraseCandidates,
@@ -12847,6 +12854,8 @@ function createTools(
 					return await runHighlightScanFallback({ ...effectiveParams, scanDeadline }, lastError);
 				};
 				let attemptedCandidateCount = 0;
+				// True once this call has a miss to report and no time for another try.
+				const retryBudgetSpent = (lastError: unknown) => Boolean(lastError) && highlightRetryBudgetSpent(scanDeadline);
 				try {
 					if (commandName === "highlight_text" && shouldTryHighlightScanFallbackBeforeOriginal((params as any)?.text)) {
 						try {
@@ -12858,6 +12867,7 @@ function createTools(
 					if (!result && commandName === "highlight_text" && shouldTryHighlightRetryCandidatesBeforeOriginal((params as any)?.text)) {
 						const preflightCandidates = buildHighlightRetryCandidates((params as any)?.text);
 						for (const candidate of preflightCandidates) {
+							if (retryBudgetSpent(lastHighlightError)) break;
 							attemptedCandidateCount += 1;
 							try {
 								result = await runHighlightCandidate(candidate);
@@ -12868,7 +12878,7 @@ function createTools(
 						}
 					}
 					if (!result) {
-						if (commandName === "highlight_text" && shouldSkipOriginalHighlightAttempt((params as any)?.text, attemptedCandidateCount)) {
+						if (commandName === "highlight_text" && (retryBudgetSpent(lastHighlightError) || shouldSkipOriginalHighlightAttempt((params as any)?.text, attemptedCandidateCount))) {
 							throw lastHighlightError || new Error(`No visible text matched: ${(params as any)?.text || ""}`);
 						}
 						result = await runCommandWithParams(params);
@@ -12895,6 +12905,7 @@ function createTools(
 					});
 					let lastError = error || lastHighlightError;
 					for (const candidate of candidates) {
+						if (retryBudgetSpent(lastError)) break;
 						try {
 							result = await runHighlightCandidate(candidate);
 							break;
@@ -12902,7 +12913,7 @@ function createTools(
 							lastError = candidateError;
 						}
 					}
-					if (!result) {
+					if (!result && !retryBudgetSpent(lastError)) {
 						try {
 							result = await tryHighlightScanFallback(params, lastError);
 						} catch (fallbackError) {

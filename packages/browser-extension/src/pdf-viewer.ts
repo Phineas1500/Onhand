@@ -11,6 +11,19 @@ const ZOOM_RENDER_DELAY_MS = 180;
 const VIEWPORT_RENDER_DELAY_MS = 100;
 const MAX_CANVAS_PIXELS = 32 * 1024 * 1024;
 const MAX_CANVAS_DIMENSION = 8192;
+// A rendered page keeps its image, about 6 MB on a high-density screen. With
+// every page of an 883-page book rendered the viewer held 5.7 GB of them, and
+// a missed quote walked 80,000 text spans twice. Only the pages nearest the
+// reading position stay rendered; the rest are searched through their PDF.js
+// text and render when they are scrolled to, jumped to or marked.
+const PAGE_IMAGE_BUDGET_BYTES = 384 * 1024 * 1024;
+const PAGE_IMAGE_MAX_PAGES = 60;
+const PAGE_IMAGE_MIN_PAGES = 6;
+// A page rendered on request (a jump, a mark, a capture) is about to be used.
+const PAGE_IMAGE_RELEASE_GRACE_MS = 3000;
+const BACKGROUND_FILL_DELAY_MS = 250;
+const PAGE_TEXT_READS_AT_ONCE = 8;
+const TOOLKIT_QUIET_MS = 400;
 const PDF_LOAD_TIMEOUT_MS = 20000;
 const CREDENTIALED_PDF_LOAD_RETRY_TIMEOUT_MS = 12000;
 const PDF_VIEWER_ANNOTATION_THEME = "light";
@@ -36,6 +49,15 @@ let annotationSequence = 0;
 let resizeRenderTimer: number | null = null;
 let zoomRenderTimer: number | null = null;
 let viewportRenderTimer: number | null = null;
+let backgroundFillTimer: number | null = null;
+// The render sequence whose background fill is running, if one is.
+let backgroundFillSequence: number | null = null;
+let textFillSequence: number | null = null;
+// Tool commands (a read, a search, a mark) in flight. Background rendering
+// and text reading wait for them: on a slow computer a just-opened long PDF
+// kept the viewer busy enough to push a first highlight past its time limit.
+let activeToolkitCommands = 0;
+let lastToolkitCommandAt = 0;
 let gestureAnimationFrame: number | null = null;
 let zoomRevision = 0;
 let queuedGestureScale = DEFAULT_SCALE;
@@ -96,6 +118,46 @@ type PdfTransientZoomGeometry = {
 
 function inlinePdfViewerBridgeStorageKey(pdfUrl: string) {
 	return `onhandInlinePdfViewerBridge:${encodeURIComponent(String(pdfUrl || ""))}`;
+}
+
+// PDF.js draws a page in steps and waits for an animation frame between
+// them. Frames stop while the tab is hidden or its window is covered, so a
+// page that was being drawn when the reader switched tabs waited until they
+// came back, with every page queued behind it, and a highlight on that page
+// ran out of time. A frame asked for, or still waited on, while the document
+// is hidden runs from a message-channel task instead (timers are clamped to
+// one a second there).
+function installHiddenTabAnimationFrames() {
+	const nativeRequest = window.requestAnimationFrame.bind(window);
+	const nativeCancel = window.cancelAnimationFrame.bind(window);
+	const waiting = new Map<number, FrameRequestCallback>();
+	const runFromTask = (id: number) => {
+		nativeCancel(id);
+		const channel = new MessageChannel();
+		channel.port1.onmessage = () => {
+			channel.port1.close();
+			const callback = waiting.get(id);
+			if (!waiting.delete(id) || !callback) return;
+			callback(performance.now());
+		};
+		channel.port2.postMessage(null);
+	};
+	window.requestAnimationFrame = (callback: FrameRequestCallback) => {
+		const id = nativeRequest((time) => {
+			if (waiting.delete(id)) callback(time);
+		});
+		waiting.set(id, callback);
+		if (document.visibilityState === "hidden") runFromTask(id);
+		return id;
+	};
+	window.cancelAnimationFrame = (id: number) => {
+		waiting.delete(id);
+		nativeCancel(id);
+	};
+	document.addEventListener("visibilitychange", () => {
+		if (document.visibilityState !== "hidden") return;
+		for (const id of [...waiting.keys()]) runFromTask(id);
+	});
 }
 
 // requestAnimationFrame never fires while the tab is hidden or the window is
@@ -1273,6 +1335,9 @@ async function pdfHighlightText(query: string, options: Record<string, any> = {}
 		});
 
 	for (const { page } of pages) {
+		// An unrendered page is searched through its PDF.js text below, not by
+		// walking the text layer it may hold: a long PDF has hundreds of them.
+		if (isPendingPage(page)) continue;
 		const result = await applyHighlightToPage(page);
 		if (result) return result;
 	}
@@ -1332,7 +1397,7 @@ async function findNearPdfTextMatch(rawQuery: string, pages: HTMLElement[]) {
 			} catch {
 				continue;
 			}
-			const lowerText = text.toLowerCase();
+			const lowerText = pageSearchForms(pageNumber, text).lower;
 			if (longestWords.filter((word) => lowerText.includes(word)).length < wordsNeeded) continue;
 			const pending = findFuzzyTokenRange(normalizeSearchText(text), queryText);
 			if (pending && (!best || pending.score > best.score)) best = { page, pageNumber, score: pending.score, match: null };
@@ -2399,10 +2464,11 @@ async function pdfSearch(options: Record<string, any> = {}) {
 	const failedPageNumbers: number[] = [];
 	const matchedPageNumbers = new Set<number>();
 	let totalMatchCount = 0;
+	await loadPageTexts(pages.filter((page) => isPendingPage(page)).map((page) => getPageNumber(page) || 0).filter(Boolean));
 	for (const page of pages) {
 		const pageNumber = getPageNumber(page);
 		if (!pageNumber) continue;
-		const textLayer = page.querySelector<HTMLElement>('.textLayer[data-onhand-pdf-text-ready="true"]');
+		const textLayer = isPendingPage(page) ? null : page.querySelector<HTMLElement>('.textLayer[data-onhand-pdf-text-ready="true"]');
 		let pageText = "";
 		try {
 			// Rendered pages already have normalized text in the DOM. Pending or
@@ -2492,7 +2558,7 @@ async function pdfReadPages(options: Record<string, any> = {}) {
 		let text: string;
 		try {
 			if (!page) throw new Error("PDF page is not available.");
-			text = page.querySelector('.textLayer[data-onhand-pdf-text-ready="true"]') ? pdfPageText(page) : await getPageTextContent(pageNumber);
+			text = !isPendingPage(page) && page.querySelector('.textLayer[data-onhand-pdf-text-ready="true"]') ? pdfPageText(page) : await getPageTextContent(pageNumber);
 			readPageNumbers.push(pageNumber);
 		} catch {
 			failedPageNumbers.push(pageNumber);
@@ -2873,7 +2939,13 @@ async function runViewerCommand(data: any) {
 		};
 	}
 	if (command === "page-toolkit-method") {
-		return await runPdfToolkitMethod(String(data?.methodName || ""), Array.isArray(data?.args) ? data.args : []);
+		activeToolkitCommands += 1;
+		try {
+			return await runPdfToolkitMethod(String(data?.methodName || ""), Array.isArray(data?.args) ? data.args : []);
+		} finally {
+			activeToolkitCommands -= 1;
+			lastToolkitCommandAt = Date.now();
+		}
 	}
 	throw new Error(`Unsupported Onhand PDF viewer bridge command: ${command || "(blank)"}`);
 }
@@ -3368,13 +3440,18 @@ async function renderPageContent(pageElement: HTMLElement, pageNumber: number, s
 //
 // Page shells for the whole document are created upfront (instant
 // scrollbar and jump targets), the pages around the reading position
-// render first, the viewer reports ready as soon as those land, and the
-// rest fill in from a background loop that follows the user's scroll
-// position. Pages render on demand when a jump, highlight, or capture
-// targets them, with a PDF.js text-content fallback for searching pages
-// that have no text layer yet.
+// render first, the viewer reports ready as soon as those land, and a
+// background loop that follows the user's scroll position fills in the
+// pages around it, up to the page-image budget. Pages render on demand
+// when a jump, highlight, or capture targets them, with a PDF.js
+// text-content fallback for searching pages that have no text layer.
 const pageRenderPromises = new Map<number, Promise<void>>();
 const pageTextContentCache = new Map<number, string>();
+const pageTextReads = new Map<number, Promise<string>>();
+const pageRenderedAt = new Map<number, number>();
+// The search forms of a page's PDF.js text. Building them for every page on
+// every search was most of what a missed quote cost in a long PDF.
+const pageSearchFormsCache = new Map<number, { source: string; lower: string; compact: string; letters: string }>();
 
 function isPendingPage(pageElement: Element | null) {
 	return pageElement?.getAttribute("data-onhand-pdf-pending") === "true";
@@ -3393,18 +3470,51 @@ function compactPendingSearchText(value: string) {
 async function getPageTextContent(pageNumber: number) {
 	const cached = pageTextContentCache.get(pageNumber);
 	if (cached !== undefined) return cached;
-	const page = await pdfDocument.getPage(pageNumber);
-	const content = await page.getTextContent();
-	// Glue items the way the rendered text layer does: fragments run
-	// together within a line, and hasEOL marks the line breaks. Let extraction
-	// failures reach callers so unreadable pages do not look like blank pages.
-	const text = normalizeText(
-		content.items
+	const reading = pageTextReads.get(pageNumber);
+	if (reading) return await reading;
+	const read = (async () => {
+		const page = await pdfDocument.getPage(pageNumber);
+		const content = await page.getTextContent();
+		// Let extraction failures reach callers so unreadable pages do not look
+		// like blank pages. A failed read is not kept, so it can be tried again.
+		const text = textFromPdfTextItems(content.items);
+		pageTextContentCache.set(pageNumber, text);
+		return text;
+	})();
+	pageTextReads.set(pageNumber, read);
+	try {
+		return await read;
+	} finally {
+		if (pageTextReads.get(pageNumber) === read) pageTextReads.delete(pageNumber);
+	}
+}
+
+// Reads the text of the pages that have none read yet, several at a time.
+// Asked for one after another, each page costs a turn of a main thread that
+// is busy drawing: the first search of an 883-page book waited seconds on that.
+async function loadPageTexts(pageNumbers: number[]) {
+	const queue = pageNumbers.filter((pageNumber) => !pageTextContentCache.has(pageNumber));
+	const readers = Array.from({ length: Math.min(PAGE_TEXT_READS_AT_ONCE, queue.length) }, async () => {
+		while (queue.length) {
+			const pageNumber = queue.shift() as number;
+			try {
+				await getPageTextContent(pageNumber);
+			} catch {
+				// The caller reads the page again and reports the failure.
+			}
+		}
+	});
+	await Promise.all(readers);
+}
+
+// Glue items the way the rendered text layer does: fragments run together
+// within a line, and hasEOL marks the line breaks.
+function textFromPdfTextItems(items: any[]) {
+	return normalizeText(
+		(Array.isArray(items) ? items : [])
 			.map((item: any) => `${typeof item?.str === "string" ? item.str : ""}${item?.hasEOL ? "\n" : ""}`)
 			.join(""),
 	);
-	pageTextContentCache.set(pageNumber, text);
-	return text;
 }
 
 async function createPageShells(sequence: number) {
@@ -3436,6 +3546,7 @@ function ensurePageRendered(pageNumber: number, sequence = renderSequence, optio
 		await renderPageContent(pageElement, pageNumber, sequence);
 		if (sequence === renderSequence && pageElement.querySelector("canvas") && pageElement.querySelector('[data-onhand-pdf-text-ready="true"]')) {
 			pageElement.removeAttribute("data-onhand-pdf-pending");
+			pageRenderedAt.set(pageNumber, Date.now());
 		}
 	})().finally(() => {
 		if (pageRenderPromises.get(pageNumber) === promise) pageRenderPromises.delete(pageNumber);
@@ -3444,8 +3555,93 @@ function ensurePageRendered(pageNumber: number, sequence = renderSequence, optio
 	return promise;
 }
 
+function currentReadingPageNumber() {
+	return Number(pageInput.value || 1) || getPageNumber(findViewportPage()) || 1;
+}
+
+function renderedPageImages() {
+	const currentNumber = currentReadingPageNumber();
+	const images: Array<{ pageElement: HTMLElement; pageNumber: number; bytes: number; distance: number }> = [];
+	for (const pageElement of getPdfPages()) {
+		if (isPendingPage(pageElement)) continue;
+		const pageNumber = getPageNumber(pageElement) || 0;
+		const canvas = pageElement.querySelector("canvas");
+		images.push({ pageElement, pageNumber, bytes: canvas ? canvas.width * canvas.height * 4 : 0, distance: Math.abs(pageNumber - currentNumber) });
+	}
+	return images;
+}
+
+function pageImagesExceedBudget(pageCount: number, bytes: number) {
+	return pageCount > PAGE_IMAGE_MAX_PAGES || bytes > PAGE_IMAGE_BUDGET_BYTES;
+}
+
+// A page keeps its image while it is on screen or beside the reading position,
+// while it holds a mark or a note, while it renders, and for a moment after
+// it rendered.
+function canReleasePageImage(image: { pageElement: HTMLElement; pageNumber: number; distance: number }) {
+	const { pageElement, pageNumber, distance } = image;
+	if (!pageNumber || distance <= 2) return false;
+	if (pageRenderPromises.has(pageNumber)) return false;
+	if (Date.now() - (pageRenderedAt.get(pageNumber) || 0) < PAGE_IMAGE_RELEASE_GRACE_MS) return false;
+	if (pageElement.querySelector("[data-onhand-annotation-id], [data-onhand-note-for]")) return false;
+	return !visibleEnough(pageElement.getBoundingClientRect());
+}
+
+// The page gives up its image and counts as unrendered again: every reader of
+// an unrendered page (search, read, highlight, jump, capture) already handles
+// that state. Its text stays, so the browser's find-in-page and a selection
+// still reach it, and the next render only has to draw.
+function releasePageImage(pageElement: HTMLElement, pageNumber: number) {
+	for (const canvas of Array.from(pageElement.querySelectorAll("canvas"))) {
+		canvas.width = 0;
+		canvas.height = 0;
+	}
+	pageElement.querySelector(".canvasWrapper")?.remove();
+	pageElement.setAttribute("data-onhand-pdf-pending", "true");
+	pageElement.setAttribute("data-onhand-pdf-raster-scale", "0");
+	pageRenderedAt.delete(pageNumber);
+	// PDF.js keeps a rendered page's fonts and images until it is told to drop them.
+	void Promise.resolve(pdfDocument?.getPage(pageNumber))
+		.then((page: any) => page?.cleanup?.())
+		.catch(() => {});
+}
+
+// Releases the images farthest from the reading position until the rendered
+// pages fit the budget again.
+function trimPageImages() {
+	const images = renderedPageImages();
+	let pageCount = images.length;
+	let bytes = images.reduce((total, image) => total + image.bytes, 0);
+	if (!pageImagesExceedBudget(pageCount, bytes)) return 0;
+	let released = 0;
+	for (const image of images.sort((left, right) => right.distance - left.distance)) {
+		if (pageCount <= PAGE_IMAGE_MIN_PAGES || !pageImagesExceedBudget(pageCount, bytes)) break;
+		if (!canReleasePageImage(image)) continue;
+		releasePageImage(image.pageElement, image.pageNumber);
+		pageCount -= 1;
+		bytes -= image.bytes;
+		released += 1;
+	}
+	return released;
+}
+
+// The background fill renders a page when its image fits the budget, or when
+// a page farther from the reading position can give its place up.
+function backgroundFillHasRoomFor(pageNumber: number) {
+	const images = renderedPageImages();
+	const bytes = images.reduce((total, image) => total + image.bytes, 0);
+	const typicalBytes = images.length ? bytes / images.length : 0;
+	if (!pageImagesExceedBudget(images.length + 1, bytes + typicalBytes)) return true;
+	const distance = Math.abs(pageNumber - currentReadingPageNumber());
+	return images.some((image) => image.distance > distance && canReleasePageImage(image));
+}
+
+function backgroundFillRunning(sequence = renderSequence) {
+	return backgroundFillSequence === sequence;
+}
+
 function nextPendingPageNumber() {
-	const currentNumber = Number(pageInput.value || 1) || getPageNumber(findViewportPage()) || 1;
+	const currentNumber = currentReadingPageNumber();
 	let best: number | null = null;
 	let bestDistance = Number.POSITIVE_INFINITY;
 	for (const pageElement of getPdfPages()) {
@@ -3465,25 +3661,122 @@ function countPendingPages() {
 	return getPdfPages().filter((pageElement) => isPendingPage(pageElement)).length;
 }
 
-async function renderRemainingPages(sequence: number) {
-	while (sequence === renderSequence) {
-		const pageNumber = nextPendingPageNumber();
-		if (!pageNumber) break;
-		await ensurePageRendered(pageNumber, sequence);
-		if (sequence !== renderSequence) return;
-		const total = Number(pdfDocument?.numPages || 0);
-		const pendingCount = countPendingPages();
-		if (pendingCount > 0) setStatus(`Rendered ${total - pendingCount}/${total}`);
+// Renders the pending pages nearest the reading position, nearest first, while
+// their images fit the budget; once it is full, a nearer page takes the place
+// of the farthest one. Runs after the document opens and again when the
+// reader has scrolled, so the rendered pages stay around where they read.
+async function renderRemainingPages(sequence: number, options: { quiet?: boolean } = {}) {
+	if (backgroundFillRunning(sequence)) return;
+	backgroundFillSequence = sequence;
+	try {
+		while (sequence === renderSequence) {
+			await waitForToolkitIdle();
+			if (sequence !== renderSequence) return;
+			trimPageImages();
+			const pageNumber = nextPendingPageNumber();
+			if (!pageNumber || !backgroundFillHasRoomFor(pageNumber)) break;
+			await ensurePageRendered(pageNumber, sequence);
+			if (sequence !== renderSequence) return;
+			if (options.quiet) continue;
+			const total = Number(pdfDocument?.numPages || 0);
+			const pendingCount = countPendingPages();
+			if (pendingCount > 0) setStatus(`Rendered ${total - pendingCount}/${total}`);
+		}
+	} finally {
+		if (backgroundFillSequence === sequence) backgroundFillSequence = null;
 	}
-	if (sequence === renderSequence && !countPendingPages()) {
-		document.body.setAttribute("data-onhand-pdf-rendered", "true");
-		setStatus("Ready");
-		// If the reader zoomed while the initial background queue was still
-		// filling, sharpen the visible page only after that queue drains. Large
-		// scanned pages can otherwise make PDF.js serialize the foreground
-		// repaint behind a slow offscreen image decode.
-		scheduleViewportRender();
+	if (sequence !== renderSequence) return;
+	document.body.setAttribute("data-onhand-pdf-rendered", "true");
+	// A fill that follows the reader's scrolling draws without a word. A zoom
+	// that settled while it ran left its page count in the status, though, and
+	// that count is this fill's to clear.
+	if (!options.quiet || /^Rendered \d/.test(statusElement.textContent || "")) setStatus("Ready");
+	// If the reader zoomed while the background queue was still filling,
+	// sharpen the visible page only after that queue drains. Large scanned
+	// pages can otherwise make PDF.js serialize the foreground repaint behind
+	// a slow offscreen image decode.
+	scheduleViewportRender();
+	// Pages left without an image still get their text.
+	if (countPendingPages()) void fillPendingPageText(sequence);
+}
+
+function scheduleBackgroundFill() {
+	if (!pdfDocument) return;
+	if (backgroundFillTimer !== null) window.clearTimeout(backgroundFillTimer);
+	const sequence = renderSequence;
+	backgroundFillTimer = window.setTimeout(() => {
+		backgroundFillTimer = null;
+		if (sequence !== renderSequence || hasTransientZoom()) return;
+		void renderRemainingPages(sequence, { quiet: true });
+	}, BACKGROUND_FILL_DELAY_MS);
+}
+
+// Resolves once no tool command is running and none has just ended (at most a
+// few seconds' wait). Highlights arrive in bursts; resuming the moment one
+// ends put a page draw in the way of the next.
+async function waitForToolkitIdle() {
+	const busy = () => activeToolkitCommands > 0 || Date.now() - lastToolkitCommandAt < TOOLKIT_QUIET_MS;
+	for (let waited = 0; busy() && waited < 100; waited += 1) {
+		await new Promise((resolve) => window.setTimeout(resolve, 40));
 	}
+}
+
+// Gives a page its text layer without its image. The text is what the
+// browser's find-in-page searches and what the reader selects; a later render
+// of the page reuses it and only draws. The same read fills the text that
+// Onhand's own search and highlights use for unrendered pages.
+async function renderPageTextOnly(pageElement: HTMLElement, pageNumber: number, sequence: number) {
+	const hasText = () => Boolean(pageElement.querySelector(".textLayer")) || pageRenderPromises.has(pageNumber);
+	if (hasText()) return;
+	const page = await pdfDocument.getPage(pageNumber);
+	const content = await page.getTextContent({ includeMarkedContent: true });
+	if (sequence !== renderSequence) return;
+	if (!pageTextContentCache.has(pageNumber)) pageTextContentCache.set(pageNumber, textFromPdfTextItems(content.items));
+	// A full render that began meanwhile builds the page's text itself.
+	if (hasText()) return;
+	const textLayer = document.createElement("div");
+	textLayer.className = "textLayer";
+	textLayer.setAttribute("data-onhand-pdf-text-layer", "true");
+	pageElement.append(textLayer);
+	await new TextLayer({ textContentSource: content, container: textLayer, viewport: page.getViewport({ scale: committedScale }) }).render();
+	if (sequence !== renderSequence || !textLayer.isConnected) return;
+	textLayer.setAttribute("data-onhand-pdf-text-ready", "true");
+	textLayer.querySelectorAll("span").forEach((span, index) => {
+		span.setAttribute("data-onhand-pdf-text-span", String(index));
+	});
+}
+
+// A long PDF keeps only the pages around the reading position drawn. This
+// pass gives every other page its text, first page to last, so find-in-page
+// covers the whole document and the first search does not wait on every page.
+async function fillPendingPageText(sequence: number) {
+	if (textFillSequence === sequence) return;
+	textFillSequence = sequence;
+	try {
+		for (const pageElement of getPdfPages()) {
+			if (sequence !== renderSequence) return;
+			const pageNumber = getPageNumber(pageElement);
+			if (!pageNumber || !isPendingPage(pageElement)) continue;
+			await waitForToolkitIdle();
+			try {
+				await renderPageTextOnly(pageElement, pageNumber, sequence);
+			} catch {
+				// A search reports the pages it could not read; nothing to do here.
+			}
+		}
+	} finally {
+		if (textFillSequence === sequence) textFillSequence = null;
+	}
+}
+
+// The forms of a pending page's text that findPendingPageWithText compares.
+function pageSearchForms(pageNumber: number, source: string) {
+	const cached = pageSearchFormsCache.get(pageNumber);
+	if (cached && cached.source === source) return cached;
+	const lower = source.toLowerCase();
+	const forms = { source, lower, compact: compactPendingSearchText(lower), letters: compactSearchText(lower) };
+	pageSearchFormsCache.set(pageNumber, forms);
+	return forms;
 }
 
 async function findPendingPageWithText(query: string, failedPageNumbers: number[] = []) {
@@ -3493,19 +3786,20 @@ async function findPendingPageWithText(query: string, failedPageNumbers: number[
 	// quote with other punctuation finds its page here too.
 	const lettersQuery = compactSearchText(query);
 	if (!normalizedQuery) return null;
-	for (const pageElement of getPdfPages()) {
-		if (!isPendingPage(pageElement)) continue;
+	const pendingPages = getPdfPages().filter((pageElement) => isPendingPage(pageElement));
+	await loadPageTexts(pendingPages.map((pageElement) => getPageNumber(pageElement) || 0).filter(Boolean));
+	for (const pageElement of pendingPages) {
 		const pageNumber = getPageNumber(pageElement);
 		if (!pageNumber) continue;
-		let text: string;
+		let forms: ReturnType<typeof pageSearchForms>;
 		try {
-			text = (await getPageTextContent(pageNumber)).toLowerCase();
+			forms = pageSearchForms(pageNumber, await getPageTextContent(pageNumber));
 		} catch {
 			failedPageNumbers.push(pageNumber);
 			continue;
 		}
-		if (text.includes(normalizedQuery) || compactPendingSearchText(text).includes(compactQuery)) return pageNumber;
-		if (lettersQuery.length >= 8 && compactSearchText(text).includes(lettersQuery)) return pageNumber;
+		if (forms.lower.includes(normalizedQuery) || forms.compact.includes(compactQuery)) return pageNumber;
+		if (lettersQuery.length >= 8 && forms.letters.includes(lettersQuery)) return pageNumber;
 	}
 	return null;
 }
@@ -3518,11 +3812,17 @@ async function renderDocument(options: { preserveView?: boolean } = {}) {
 	document.body.removeAttribute("data-onhand-pdf-rendered");
 	viewer.replaceChildren();
 	pageRenderPromises.clear();
+	pageRenderedAt.clear();
 	pageCountElement.textContent = `/ ${pdfDocument.numPages}`;
 	pageInput.max = String(pdfDocument.numPages);
 	setStatus(`Preparing ${pdfDocument.numPages} pages...`);
 	await createPageShells(sequence);
 	if (sequence !== renderSequence) return;
+	// A PDF with more pages than stay drawn is searched through its PDF.js
+	// text. Reading it starts now, so the first search or highlight finds it read.
+	if (Number(pdfDocument.numPages || 0) > PAGE_IMAGE_MAX_PAGES) {
+		void loadPageTexts(Array.from({ length: Number(pdfDocument.numPages) }, (_, index) => index + 1));
+	}
 	// Render the pages nearest the reading position, then report ready so
 	// highlights, notes, and citation jumps work while the rest fill in.
 	for (let i = 0; i < 3; i += 1) {
@@ -3535,6 +3835,9 @@ async function renderDocument(options: { preserveView?: boolean } = {}) {
 	const pendingCount = countPendingPages();
 	setStatus(pendingCount ? `Rendered ${pdfDocument.numPages - pendingCount}/${pdfDocument.numPages}` : "Ready");
 	void renderRemainingPages(sequence);
+	// And its other pages get their text layers without waiting for the image
+	// fill, so find-in-page covers the whole document sooner.
+	if (Number(pdfDocument.numPages || 0) > PAGE_IMAGE_MAX_PAGES) void fillPendingPageText(sequence);
 	await restorePdfViewSnapshot(snapshot, sequence);
 }
 
@@ -3581,9 +3884,11 @@ function settleZoomRender(sequence: number, expectedZoomRevision: number) {
 		if (sequence !== renderSequence || expectedZoomRevision !== zoomRevision) return;
 		commitTransientZoom();
 		refreshPdfAnnotationLayers();
-		const pendingCountBeforeSharpen = countPendingPages();
-		if (pendingCountBeforeSharpen) {
-			setStatus(`Rendered ${Number(pdfDocument?.numPages || 0) - pendingCountBeforeSharpen}/${pdfDocument?.numPages || 0}`);
+		// While the background fill runs, sharpening waits for it to finish
+		// (renderRemainingPages schedules it). A long PDF keeps pages unrendered
+		// for good, so pending pages alone say nothing.
+		if (backgroundFillRunning(sequence)) {
+			setStatus(`Rendered ${Number(pdfDocument?.numPages || 0) - countPendingPages()}/${pdfDocument?.numPages || 0}`);
 			return;
 		}
 		if (pagesNearViewport().some((page) => pageNeedsSharperRender(page))) {
@@ -3591,8 +3896,9 @@ function settleZoomRender(sequence: number, expectedZoomRevision: number) {
 		}
 		await renderSharpPagesNearViewport(sequence, expectedZoomRevision);
 		if (sequence !== renderSequence || expectedZoomRevision !== zoomRevision) return;
-		const pendingCount = countPendingPages();
-		setStatus(pendingCount ? `Rendered ${Number(pdfDocument?.numPages || 0) - pendingCount}/${pdfDocument?.numPages || 0}` : "Ready");
+		setStatus(backgroundFillRunning(sequence) ? `Rendered ${Number(pdfDocument?.numPages || 0) - countPendingPages()}/${pdfDocument?.numPages || 0}` : "Ready");
+		// A sharper image is a larger one: let the fill trim to the budget.
+		scheduleBackgroundFill();
 	}, ZOOM_RENDER_DELAY_MS);
 }
 
@@ -3800,6 +4106,7 @@ window.addEventListener(
 	() => {
 		updatePageFromScroll();
 		scheduleViewportRender();
+		scheduleBackgroundFill();
 	},
 	{ passive: true },
 );
@@ -3818,6 +4125,7 @@ window.addEventListener(
 	{ passive: true },
 );
 
+installHiddenTabAnimationFrames();
 loadPdf().catch((error) => {
 	showError(error?.message || String(error));
 });

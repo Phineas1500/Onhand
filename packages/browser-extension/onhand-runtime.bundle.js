@@ -88828,6 +88828,9 @@ var HIGHLIGHT_SKIP_ORIGINAL_OVER_CHARS = 320;
 var HIGHLIGHT_COMMAND_TIMEOUT_MS = 6e3;
 var HIGHLIGHT_TOOL_CALL_TIMEOUT_MS = 12e3;
 var HIGHLIGHT_SCAN_DEADLINE_MS = 8e3;
+function highlightRetryBudgetSpent(deadline, now = Date.now()) {
+  return deadline > 0 && now >= deadline;
+}
 var ANNOTATION_COMMAND_TIMEOUT_MS = 12e3;
 var TEACHING_SOURCE_HIGHLIGHT_MAX = 6;
 var TEACHING_SOURCE_NOTE_MAX = 6;
@@ -96542,6 +96545,7 @@ var __browserRuntimeTest = {
   queueBlankReplyRetryForTest: queueBlankReplyRetry,
   summarizeToolReliabilityForTest: summarizeToolReliability,
   buildHighlightRetryCandidatesForTest: buildHighlightRetryCandidates,
+  highlightRetryBudgetSpentForTest: highlightRetryBudgetSpent,
   looksLikeWeakCompactTeachingHighlightTextForTest: looksLikeWeakCompactTeachingHighlightText,
   looksLikeCompleteSentenceForTest: looksLikeCompleteSentence,
   splitReadablePhraseCandidatesForTest: splitReadablePhraseCandidates,
@@ -96982,6 +96986,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
           return await runHighlightScanFallback({ ...effectiveParams, scanDeadline }, lastError);
         };
         let attemptedCandidateCount = 0;
+        const retryBudgetSpent = (lastError) => Boolean(lastError) && highlightRetryBudgetSpent(scanDeadline);
         try {
           if (commandName === "highlight_text" && shouldTryHighlightScanFallbackBeforeOriginal(params?.text)) {
             try {
@@ -96993,6 +96998,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
           if (!result && commandName === "highlight_text" && shouldTryHighlightRetryCandidatesBeforeOriginal(params?.text)) {
             const preflightCandidates = buildHighlightRetryCandidates(params?.text);
             for (const candidate of preflightCandidates) {
+              if (retryBudgetSpent(lastHighlightError)) break;
               attemptedCandidateCount += 1;
               try {
                 result = await runHighlightCandidate(candidate);
@@ -97003,7 +97009,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
             }
           }
           if (!result) {
-            if (commandName === "highlight_text" && shouldSkipOriginalHighlightAttempt(params?.text, attemptedCandidateCount)) {
+            if (commandName === "highlight_text" && (retryBudgetSpent(lastHighlightError) || shouldSkipOriginalHighlightAttempt(params?.text, attemptedCandidateCount))) {
               throw lastHighlightError || new Error(`No visible text matched: ${params?.text || ""}`);
             }
             result = await runCommandWithParams(params);
@@ -97030,6 +97036,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
           });
           let lastError = error2 || lastHighlightError;
           for (const candidate of candidates) {
+            if (retryBudgetSpent(lastError)) break;
             try {
               result = await runHighlightCandidate(candidate);
               break;
@@ -97037,7 +97044,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
               lastError = candidateError;
             }
           }
-          if (!result) {
+          if (!result && !retryBudgetSpent(lastError)) {
             try {
               result = await tryHighlightScanFallback(params, lastError);
             } catch (fallbackError) {

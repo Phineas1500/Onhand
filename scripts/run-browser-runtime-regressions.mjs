@@ -3684,7 +3684,11 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 		assert.match(source, /commitTransientZoom/, `${path} should commit page layout only after gesture zoom settles`);
 		assert.match(source, /transientZoomCentersHorizontally/, `${path} should center transient zoom while the current page fits the viewport`);
 		assert.match(source, /`translate3d\([^`]+\) scale\(\$\{ratio\}\)`/, `${path} should keep compositor-preview translation in viewport pixels`);
-		assert.match(source, /pendingCountBeforeSharpen/, `${path} should not compete with the initial background render queue when sharpening scans`);
+		assert.match(source, /if \(backgroundFillRunning\(sequence\)\) \{/, `${path} should not compete with the background render queue when sharpening scans`);
+		// A long PDF keeps only the pages around the reading position rendered:
+		// every page's image at once was 5.8 GB on an 883-page book.
+		assert.match(source, /trimPageImages\(\)/, `${path} should release page images past the budget`);
+		assert.match(source, /PAGE_IMAGE_BUDGET_BYTES/, `${path} should bound the rendered page images`);
 		assert.match(source, /refreshPdfAnnotationLayers/, `${path} should refresh existing annotation geometry at committed zoom without recreating highlight DOM`);
 		assert.match(source, /return Math\.min\(requested, dimensionLimit, pixelLimit\)/, `${path} should honor canvas dimension and pixel caps at every zoom level`);
 		assert.doesNotMatch(source, /Math\.max\(0\.25, Math\.min\(requested, dimensionLimit, pixelLimit\)\)/, `${path} should not override canvas safety caps with a minimum output scale`);
@@ -12900,6 +12904,54 @@ async function assertHighlightsCanCarryTheirNote() {
 	console.log("Highlights carrying their note: attach, failed highlight, guarded note, and plain highlight passed");
 }
 
+// On a slow computer each "not here" can take seconds. The retries used to run
+// into the call's 12 s cap, which reads as a stalled page and blocks every
+// later highlight on the tab. Past the scan deadline no further try starts and
+// the call reports the miss it has.
+async function assertSlowHighlightMissesReportTheMiss() {
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const quote = "- First exact source sentence for retry\n- Second exact source sentence for retry\n- Third exact source sentence for retry\n- Fourth exact source sentence for retry";
+	const candidateCount = test.buildHighlightRetryCandidatesForTest(quote).length;
+	assert.ok(candidateCount >= 3, "the quote has retry candidates to walk");
+	const realNow = Date.now;
+	let clockOffset = 0;
+	let secondsPerMiss = 3;
+	let attempts = 0;
+	const host = {
+		async runCommand(name, args) {
+			if (name !== "highlight_text") return {};
+			attempts += 1;
+			clockOffset += secondsPerMiss * 1000;
+			throw new Error(`No visible text matched: ${args.text}`);
+		},
+	};
+	const tools = test.createToolsForTest(host, {}, (params) => params, undefined, () => {}, () => null, async () => {
+		throw new Error("the page scan must not start once the deadline has passed");
+	});
+	const highlight = tools.find((tool) => tool.name === "browser_highlight_text");
+	Date.now = () => realNow() + clockOffset;
+	try {
+		await assert.rejects(highlight.execute("slow", { text: quote }), (error) => /No visible text matched/.test(error.message) && !/timed out/i.test(error.message));
+		assert.equal(attempts, 3, "three misses of 3 s each pass the 8 s deadline; the fourth try does not start");
+
+		attempts = 0;
+		clockOffset = 0;
+		secondsPerMiss = 0.1;
+		let scanned = 0;
+		const quickTools = test.createToolsForTest(host, {}, (params) => params, undefined, () => {}, () => null, async () => {
+			scanned += 1;
+			return null;
+		});
+		await assert.rejects(quickTools.find((tool) => tool.name === "browser_highlight_text").execute("quick", { text: quote }), /No visible text matched/);
+		assert.equal(attempts, candidateCount + 1, "quick misses still walk the quote and every retry candidate");
+		assert.equal(scanned, 0, "the scan stays with the calls that ask for it");
+	} finally {
+		Date.now = realNow;
+	}
+	assert.equal(test.highlightRetryBudgetSpentForTest(0), false, "no deadline, no limit");
+	console.log("Slow highlight misses report the miss instead of the call cap passed");
+}
+
 // Notes that never reached the page (an unknown highlight, bad arguments)
 // say nothing about whether the page accepts notes, so they must not trip the
 // compact-teaching "notes keep failing here" stop. In the x.com session five
@@ -13526,6 +13578,7 @@ async function main() {
 	await assertPageInjectionNoticeAndClassifierPageContext();
 	await assertCitedSourceQuestionsOpenTheSource();
 	await assertHighlightsCanCarryTheirNote();
+	await assertSlowHighlightMissesReportTheMiss();
 	await assertNoteLookupFailuresDoNotStopNotes();
 	await assertNoteTakingNeverGetsTheTeachingCap();
 	await assertReplyAssemblyAndAutoCitation();

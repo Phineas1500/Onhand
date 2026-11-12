@@ -10640,7 +10640,10 @@ async function callOnhandPdfViewerFrameViaRuntimePort(tabId, commandPayload, mis
 		const onMessage = (message) => {
 			if (message?.type !== "onhand-pdf-viewer-evaluate-result" || message.requestId !== requestId) return;
 			if (!message.ok) {
-				finish(reject, new Error(message.error || missingMessage || "Onhand PDF viewer runtime bridge failed"));
+				const error = new Error(message.error || missingMessage || "Onhand PDF viewer runtime bridge failed");
+				// The viewer ran the command and this is its answer, not a failed delivery.
+				error.onhandPdfViewerAnswered = true;
+				finish(reject, error);
 				return;
 			}
 			finish(resolve, normalizeExecuteScriptValue(message.value));
@@ -10889,6 +10892,10 @@ async function evaluateInMatchingFrame(tabId, findMatchingContexts, expression, 
 	}
 }
 
+function isOnhandPdfViewerAnswer(error) {
+	return error?.onhandPdfViewerAnswered === true && !/Unsupported Onhand PDF viewer toolkit method/i.test(String(error?.message || ""));
+}
+
 async function executePageToolkitMethodViaOnhandPdfViewerFrame(tabId, methodName, args = [], toolkitOptions = {}) {
 	const missingMessage = `No Onhand PDF viewer frame context found for ${methodName}`;
 	const commandPayload = {
@@ -10900,6 +10907,12 @@ async function executePageToolkitMethodViaOnhandPdfViewerFrame(tabId, methodName
 	try {
 		return await callOnhandPdfViewerFrameViaRuntimePort(tabId, commandPayload, missingMessage);
 	} catch (runtimePortError) {
+		// The viewer ran the method and said why it failed (a quote it does not
+		// hold, a page that is not there). The other routes reach the same
+		// viewer: each ran the method again for the same answer, and on a tab
+		// the debugger may not attach to, the last one added Chrome's refusal to
+		// the message. Only a method the viewer lacks goes on to the generic toolkit.
+		if (isOnhandPdfViewerAnswer(runtimePortError)) throw runtimePortError;
 		try {
 			return await callOnhandPdfViewerFrameViaBridge(tabId, commandPayload, missingMessage);
 		} catch (bridgeFrameError) {
