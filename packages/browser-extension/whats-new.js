@@ -8,6 +8,14 @@
 // releases sees the newest few lines.
 globalThis.ONHAND_WHATS_NEW = Object.freeze([
 	{
+		version: "0.4.19",
+		items: [
+			"PDFs that a publisher or course page shows inside the page now open in Onhand's viewer, and the text around them can be highlighted.",
+			"More PDFs behind a sign-in open, including when another extension is active on the tab.",
+			"When highlights keep missing, Onhand stops retrying sooner and answers with what it has.",
+		],
+	},
+	{
 		version: "0.4.18",
 		items: [
 			"Select text on a page, right-click it and pick “Explain with Onhand” to ask about just that part.",
