@@ -8,6 +8,13 @@
 // releases sees the newest few lines.
 globalThis.ONHAND_WHATS_NEW = Object.freeze([
 	{
+		version: "0.4.20",
+		items: [
+			"Long PDFs stay fast: highlights and search in a book of hundreds of pages no longer time out, and the viewer uses much less memory.",
+			"PDF pages keep loading when you switch to another tab.",
+		],
+	},
+	{
 		version: "0.4.19",
 		items: [
 			"PDFs that a publisher or course page shows inside the page now open in Onhand's viewer, and the text around them can be highlighted.",
