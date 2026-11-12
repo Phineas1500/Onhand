@@ -308,9 +308,17 @@ upstream model, so their `blob19` carries the turn's coarse tool-failure
 reasons instead: `tool:reason*count` entries such as
 `get_visible_text:timeout*2,highlight_text:no_match*1`, with the
 reason one of `guard`, `timeout`, `no_match`, `tab`, `unreachable`,
-`restricted`, `page_changed`, `network`, `bad_args` or `other`. They never
-contain page text or error messages; the Worker drops any entry that is not
-in that shape. Numeric fields are timestamp, status, duration, body bytes,
+`restricted`, `page_changed`, `network`, `bad_args` or `other`. A missed
+highlight says more: `no_match`, `weak` (the closest passage shares only part
+of the quote), `hidden` or `formula`, with `_pdf` when asked on a PDF and
+`_nl` when the quote is not in Latin script. Refusals that never reach a
+matcher have their own names: `pdf_surface` (a PDF shown where Onhand cannot
+mark it, such as a viewer without a text layer or an embed inside a web
+page), `tab_kind` (a tab that is not a web page), `region` (a region
+highlight the PDF viewer turned down), `not_pdf` (an address that looked
+like a PDF and was a web page) and `pdf_load` (the viewer could not load or
+read the PDF). They never contain page text or error messages; the Worker
+drops any entry that is not in that shape. Numeric fields are timestamp, status, duration, body bytes,
 quota current, quota cap, prompt tokens, completion tokens, total tokens,
 cost, action count, artifact count, tool step count, tool failure count,
 recovered tool failure count, final tool failure count, tool time, and

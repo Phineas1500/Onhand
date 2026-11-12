@@ -172,6 +172,159 @@ async function assertRemoveAnnotationsTargetsSingleMarks() {
 	);
 }
 
+// An address can look like a PDF and be a web page (a publisher's
+// ".../doi/pdf/..." page with the PDF in a frame). The handoff asks the tab
+// what it holds and, when that is a web page, asks the address what it
+// returns, before laying the PDF viewer over it.
+async function assertWebPageAtPdfAddressIsRecognised() {
+	const names = ["isHttpLikeUrl", "isFileUrl", "isLikelyPdfResourceUrl", "stripUrlHash", "probeAddressIsPdf", "describeWebPageAtPdfAddress"];
+	const declarations = await Promise.all(names.map((name) => loadBackgroundFunction(name)));
+	const make = ({ page, response }) => {
+		const fetched = [];
+		const helpers = new Function(
+			"executeScriptInTab",
+			"withOperationTimeout",
+			"fetch",
+			"SCRIPT_EXECUTION_TIMEOUT_MS",
+			"GOOGLE_SCHOLAR_READER_EXTENSION_ID",
+			`${declarations.join("\n")}\nreturn { probeAddressIsPdf, describeWebPageAtPdfAddress };`,
+		)(
+			async () => {
+				if (page instanceof Error) throw page;
+				return page;
+			},
+			(promise) => promise,
+			async (url, init) => {
+				fetched.push({ url, init });
+				if (response instanceof Error) throw response;
+				return response();
+			},
+			2500,
+			"dahenjhkoodjbpjheillcadbppiidmhp",
+		);
+		return { ...helpers, fetched };
+	};
+	const html = () => new Response("<!doctype html><html><body>Article</body></html>", { headers: { "content-type": "text/html; charset=utf-8" } });
+	const pdf = () => new Response("%PDF-1.7\n1 0 obj", { headers: { "content-type": "application/pdf" } });
+	const wrapper = "https://journal.example.test/doi/pdf/10.1000/paper";
+	const tab = { id: 4, url: wrapper };
+	const webPage = (frames = []) => ({ contentType: "text/html", reader: false, frames });
+
+	// The browser's own PDF viewer: a PDF, and no request is made to find out.
+	const native = make({ page: { contentType: "application/pdf", reader: false, frames: [] }, response: html });
+	assert.equal(await native.describeWebPageAtPdfAddress(tab, wrapper), null);
+	assert.equal(native.fetched.length, 0);
+
+	// A web page whose address returns a web page: the PDF it embeds is the
+	// largest frame that is typed as a PDF or has a PDF-looking address.
+	const page = make({
+		page: webPage([
+			{ url: `${wrapper}#top`, typed: false, area: 900000 },
+			{ url: "https://ads.example.test/banner.html", typed: false, area: 950000 },
+			{ url: "https://journal.example.test/supplement", typed: true, area: 4000 },
+			{ url: "https://journal.example.test/doi/pdfdirect/10.1000/paper.pdf", typed: false, area: 800000 },
+		]),
+		response: html,
+	});
+	assert.deepEqual(await page.describeWebPageAtPdfAddress(tab, wrapper), { embeddedPdfUrl: "https://journal.example.test/doi/pdfdirect/10.1000/paper.pdf" });
+	assert.equal(page.fetched.length, 1);
+	assert.equal(page.fetched[0].url, wrapper);
+	assert.equal(page.fetched[0].init.credentials, "include", "a signed-in reader's page is asked for as they see it");
+	assert.equal(page.fetched[0].init.headers.Range, "bytes=0-1023", "only the head of the answer is needed");
+	assert.deepEqual(await make({ page: webPage([{ url: "https://ads.example.test/banner.html", typed: false, area: 950000 }]), response: html }).describeWebPageAtPdfAddress(tab, wrapper), { embeddedPdfUrl: "" });
+
+	// Anything short of a confirmed web page is treated as the PDF it claims to be.
+	assert.equal(await make({ page: webPage(), response: pdf }).describeWebPageAtPdfAddress(tab, wrapper), null, "another reader drew its page over a real PDF");
+	assert.equal(await make({ page: webPage(), response: new Error("Failed to fetch") }).describeWebPageAtPdfAddress(tab, wrapper), null, "the address could not be asked");
+	const reader = make({ page: { contentType: "text/html", reader: true, frames: [] }, response: html });
+	assert.equal(await reader.describeWebPageAtPdfAddress(tab, wrapper), null, "Onhand's viewer or the Scholar reader is already over the PDF");
+	assert.equal(reader.fetched.length, 0);
+	assert.equal(await make({ page: new Error("Missing host permission for the tab"), response: html }).describeWebPageAtPdfAddress(tab, wrapper), null, "a viewer that can't be scripted (Firefox)");
+	assert.equal(await page.describeWebPageAtPdfAddress({ id: 4, url: "file:///tmp/paper.pdf" }, "file:///tmp/paper.pdf"), null);
+	assert.equal(await page.describeWebPageAtPdfAddress({ url: wrapper }, wrapper), null);
+
+	// What an address returns, whatever the server calls it.
+	const probe = (response) => make({ page: webPage(), response }).probeAddressIsPdf(wrapper);
+	assert.equal(await probe(pdf), true);
+	assert.equal(await probe(() => new Response("%PDF-1.4 binary", { headers: { "content-type": "application/octet-stream" } })), true, "every PDF starts with %PDF-");
+	assert.equal(await probe(html), false);
+	assert.equal(await probe(() => new Response("  <html lang=\"en\"><head>", { headers: { "content-type": "application/octet-stream" } })), false);
+	assert.equal(await probe(() => new Response("plain words", { headers: { "content-type": "text/plain" } })), null, "neither a PDF nor a web page: not known");
+	assert.equal(await probe(new Error("Failed to fetch")), null);
+}
+
+// A protected PDF is loaded through the reader's signed-in tab, by debugger.
+// Chrome refuses a debugger on a tab that holds another extension's frame (a
+// PDF reader, a password manager), and the viewer showed that refusal instead
+// of the PDF. The tab's own document makes the request then.
+async function assertProtectedPdfLoadsWhenDebuggerIsRefused() {
+	const names = ["isHttpLikeUrl", "isFileUrl", "isLikelyPdfResourceUrl", "normalizePdfUrlCandidate", "isRestrictedScriptingError", "isOwnExtensionPdfViewerUrl",
+		"isOnhandPdfViewerLikeUrl", "extractPdfSourceUrlFromViewerLikeUrl", "stripUrlHash", "pdfUrlForAuthorizedViewerTab",
+		"looksLikePdfBytes", "encodeBytesAsBase64", "loadAuthorizedPdfBytesFromTab", "loadPdfBytesFromTabDocument"];
+	const declarations = await Promise.all(names.map((name) => loadBackgroundFunction(name)));
+	const pdfUrl = "https://library.example.test/reserve/chapter-3.pdf";
+	const refused = new Error("Cannot access a chrome-extension:// URL of different extension");
+	const pdfBytes = new TextEncoder().encode(`%PDF-1.7\n${"x".repeat(70000)}\n%%EOF`);
+	const make = ({ debuggerResult, tabUrl = pdfUrl, response = () => new Response(pdfBytes, { headers: { "content-type": "application/pdf" } }) }) => {
+		const requests = [];
+		const scripted = [];
+		const originalFetch = globalThis.fetch;
+		const load = new Function(
+			"chrome", "authorizeOnhandPdfViewerCredentialedSource", "loadPdfBytesThroughTabDebugger", "executeScriptInTab", "withOperationTimeout",
+			"ONHAND_AUTHENTICATED_PDF_MAX_BYTES", "ONHAND_AUTHENTICATED_PDF_LOAD_TIMEOUT_MS",
+			`${declarations.join("\n")}\nreturn loadAuthorizedPdfBytesFromTab;`,
+		)(
+			{ tabs: { get: async (id) => ({ id, url: tabUrl }) }, runtime: { getURL: (path) => `chrome-extension://onhand-test/${path}` } },
+			async () => true,
+			async () => {
+				if (debuggerResult instanceof Error) throw debuggerResult;
+				return debuggerResult;
+			},
+			// Run the function meant for the tab here, with the tab's fetch stood in.
+			async (tabId, func, args) => {
+				scripted.push(tabId);
+				globalThis.fetch = async (url, init) => {
+					requests.push({ url, init });
+					return response();
+				};
+				try {
+					return await func(...args);
+				} finally {
+					globalThis.fetch = originalFetch;
+				}
+			},
+			(promise) => promise,
+			24 * 1024 * 1024,
+			10000,
+		);
+		return { load: () => load({ tab: { id: 12 } }, pdfUrl), requests, scripted };
+	};
+
+	const viaDebugger = make({ debuggerResult: pdfBytes });
+	assert.equal((await viaDebugger.load()).byteLength, pdfBytes.byteLength);
+	assert.deepEqual(viaDebugger.scripted, [], "the debugger path is still the first choice");
+
+	const viaTab = make({ debuggerResult: refused });
+	const loaded = await viaTab.load();
+	assert.equal(loaded.byteLength, pdfBytes.byteLength);
+	assert.equal(Buffer.from(loaded.dataBase64, "base64").toString("latin1").slice(0, 8), "%PDF-1.7", "the bytes arrive intact");
+	assert.equal(Buffer.from(loaded.dataBase64, "base64").length, pdfBytes.byteLength);
+	assert.deepEqual(viaTab.scripted, [12], "the tab that asked is the tab that fetches");
+	assert.equal(viaTab.requests[0].url, pdfUrl);
+	assert.equal(viaTab.requests[0].init.credentials, "include", "signed in as the reader is");
+	assert.equal(viaTab.requests[0].init.cache, "force-cache", "a link that downloads once is not asked for twice");
+
+	// What the tab's document gets back is checked like the debugger's answer.
+	await assert.rejects(make({ debuggerResult: refused, response: () => new Response("<!doctype html><title>Sign in</title>", { status: 200 }) }).load(), /returned a non-PDF response/);
+	await assert.rejects(make({ debuggerResult: refused, response: () => new Response("", { status: 403 }) }).load(), /could not load the PDF \(HTTP 403\)/);
+	await assert.rejects(make({ debuggerResult: refused, response: () => { throw new TypeError("Failed to fetch"); } }).load(), /could not load the PDF \(Failed to fetch\)/);
+	// Other debugger failures are not papered over, and a tab that is not a web page is not scripted.
+	await assert.rejects(make({ debuggerResult: new Error("The authenticated browser tab could not load the PDF (HTTP 404).") }).load(), /HTTP 404/);
+	const standalone = make({ debuggerResult: refused, tabUrl: `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent(pdfUrl)}` });
+	await assert.rejects(standalone.load(), /Cannot access a chrome-extension/);
+	assert.deepEqual(standalone.scripted, []);
+}
+
 async function assertPdfViewerHandoffHelpers() {
 	const functionNames = [
 		"isOwnExtensionPdfViewerUrl",
@@ -3485,7 +3638,7 @@ async function assertGenericPageRegionWithoutPdfSignalStaysHtmlSurface() {
 	assert.equal(surface.viewer, "html");
 }
 
-async function assertPdfEmbedWithoutTextLayerReturnsUnsupportedInsteadOfHtmlFallback() {
+async function assertPageAroundEmbeddedPdfMarksOnlyItsOwnExactWords() {
 	const { toolkit } = await createToolkit(`
 		<main>
 			<h1>Wrapper page text that should not be highlighted as PDF source</h1>
@@ -3506,10 +3659,23 @@ async function assertPdfEmbedWithoutTextLayerReturnsUnsupportedInsteadOfHtmlFall
 	assert.match(visible.text, /does not expose selectable page text/i);
 	assert.doesNotMatch(visible.text, /Wrapper page text/);
 
+	// The page's own words can be marked: a course or article page that embeds
+	// a PDF used to refuse every highlight, its own text included.
+	const ownWords = await toolkit.highlightText("Wrapper page text", { scrollIntoView: false });
+	assert.equal(ownWords.kind, "inline", "a mark on the page's words is a page mark, not a PDF source");
+	assert.equal(ownWords.matchedText, "Wrapper page text");
+	assert.notEqual(ownWords.approximate, true);
+	// Only its exact words. A quote from the PDF must not land on page text
+	// that merely resembles it; the miss says where the PDF can be marked.
 	await assert.rejects(
-		() => toolkit.highlightText("Wrapper page text", { scrollIntoView: false }),
-		/Unsupported PDF annotation surface/i,
-		"PDF surfaces without readable text should not silently fall back to HTML highlighting",
+		() => toolkit.highlightText("Wrapper page words which should not get highlighted as PDF sources", { scrollIntoView: false }),
+		/^Error: No visible text matched: Wrapper page words which should not get highlighted as PDF sources\nThis page shows a PDF in an embedded viewer that Onhand cannot mark in place\. If the quote is from that PDF, open it with browser_open_pdf_in_onhand_viewer \(pdfUrl: https:\/\/example\.test\/lecture\.pdf\) and highlight it there\.$/,
+		"a near miss is refused, with the embedded PDF's address",
+	);
+	await assert.rejects(
+		() => toolkit.highlightText("Recurrent neural networks preserve sequence state.", { scrollIntoView: false }),
+		/No visible text matched: Recurrent neural networks preserve sequence state\.\nThis page shows a PDF in an embedded viewer that Onhand cannot mark in place/,
+		"a quote from the PDF does not fall back to the page around it",
 	);
 
 	const { toolkit: topPdfToolkit } = await createToolkitAtUrl(
@@ -4681,6 +4847,8 @@ async function assertPdfSelectionIncludesAnchor() {
 
 async function main() {
 	await assertPdfViewerHandoffHelpers();
+	await assertWebPageAtPdfAddressIsRecognised();
+	await assertProtectedPdfLoadsWhenDebuggerIsRefused();
 	await assertDetachedPdfViewerOpenRouting();
 	await assertChromeWebStoreTabsAreNamedUnreadable();
 	await assertWelcomePageOpensOnlyAfterStoreInstall();
@@ -4787,7 +4955,7 @@ async function main() {
 	await assertControlledScholarPdfFixtureMatchesAdapterContract();
 	await assertGoogleScholarReaderDomMatchesAdapterContract();
 	await assertGenericPageRegionWithoutPdfSignalStaysHtmlSurface();
-	await assertPdfEmbedWithoutTextLayerReturnsUnsupportedInsteadOfHtmlFallback();
+	await assertPageAroundEmbeddedPdfMarksOnlyItsOwnExactWords();
 	await assertGoogleScholarReaderFrameUsesTopTabUrlForPdfIdentity();
 	await assertPdfHighlightAndNoteUseOverlayAnchors();
 	await assertPdfHighlightUsesTextOffsetsInsideSingleSpan();

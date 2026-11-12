@@ -1900,9 +1900,52 @@ function shouldAbortAfterRepeatedHighlightFailures(request: any) {
 	return traces.filter(isCountableHighlightFailureTrace).length >= failureLimit;
 }
 
+// The limit above counts only while no highlight has landed on the page, and
+// starts again when the model moves to another page. Either gap lets a turn
+// keep missing: one real turn made 16 failed attempts. So highlighting also
+// ends after a run of misses that follows a landed highlight, and after this
+// many misses in the turn, whatever landed and whichever pages were tried.
+const HIGHLIGHT_FAILURE_TURN_LIMIT = 8;
+
+function highlightMissesSinceLastLandedHighlight(request: any) {
+	const traces = highlightFailureBudgetTraceWindow(request);
+	let lastLanded = -1;
+	traces.forEach((trace: any, index: number) => {
+		if (isCompletedSourceHighlightTrace(trace)) lastLanded = index;
+	});
+	if (lastLanded < 0) return 0;
+	return traces.slice(lastLanded + 1).filter(isCountableHighlightFailureTrace).length;
+}
+
+function shouldStopHighlightingAfterMisses(request: any) {
+	if (!request || request.aborted) return false;
+	return (
+		highlightMissesSinceLastLandedHighlight(request) >= HIGHLIGHT_FAILURE_ABORT_LIMIT ||
+		countCountableHighlightFailureTraces(request) >= HIGHLIGHT_FAILURE_TURN_LIMIT
+	);
+}
+
 function buildRepeatedHighlightFailureGuardResult(toolName: string, commandName: string, request: any) {
 	if (commandName !== "highlight_text") return null;
-	if (!shouldAbortAfterRepeatedHighlightFailures(request)) return null;
+	if (!shouldAbortAfterRepeatedHighlightFailures(request)) {
+		if (!shouldStopHighlightingAfterMisses(request)) return null;
+		const landed = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).some(isCompletedSourceHighlightTrace);
+		return {
+			guardrail: {
+				kind: "repeated_highlight_failure",
+				blockedTool: toolName,
+				blockedCommand: commandName,
+				message: [
+					"Several highlight attempts have failed this turn, and each retry costs the user time.",
+					`Do not call ${toolName} again for this turn.`,
+					landed
+						? "Keep the highlights that landed and finish the answer from what you have already read."
+						: "Answer the user's question now from the readable page content.",
+					"Do not mention highlight failures, source-marker status, or claim more of the page is highlighted than is. Do not use horizontal rules.",
+				].join(" "),
+			},
+		};
+	}
 	const prompt = request?.displayPrompt || request?.prompt || "";
 	const hasReadableSourceContent = hasReadableSourceContentAfterLatestNavigation(request);
 	const shouldTryAlternateSource =
@@ -1999,6 +2042,37 @@ function buildRepeatedToolFailureAnswerNowGuardResult(toolName: string, commandN
 	};
 }
 
+// Scrolling a tab to look for a missed quote helps on pages that load text as
+// they scroll. Onhand's PDF viewer searches every page of the document
+// itself, so there the scan found nothing new and replaced the matcher's
+// message with its own ("not currently loaded"), which hid the kind of miss.
+function highlightTargetIsOnhandPdfViewer(request: any, tabId: number) {
+	if (!Number.isFinite(tabId) || tabId <= 0) return false;
+	const initialTab = request?.initialActiveTab;
+	if (Number(initialTab?.id) === tabId && isOnhandPdfViewerUrl(initialTab?.url)) return true;
+	return (Array.isArray(request?.toolTraces) ? request.toolTraces : []).some((trace: any) => {
+		if (trace?.state !== "complete") return false;
+		const details = trace?.resultDetails || trace?.details || {};
+		if (Number(details?.tab?.id) !== tabId) return false;
+		return (
+			/^browser_(?:pdf_|open_pdf_in_onhand_viewer$)/.test(String(trace?.toolName || "")) ||
+			details?.annotation?.kind === "pdf" ||
+			isOnhandPdfViewerUrl(details?.tab?.url)
+		);
+	});
+}
+
+const REPLAY_MISSING_SOURCE_PATTERN = /^Saved source text is not currently loaded in this page/i;
+
+// The scan's "not loaded in this page" says only that the quote is nowhere in
+// the page. The matcher's own miss says more (the closest passage), so it is
+// the one the model and the miss reasons get.
+function preferredHighlightMissError(matcherError: unknown, scanError: unknown) {
+	if (!scanError) return matcherError;
+	if (matcherError && REPLAY_MISSING_SOURCE_PATTERN.test(String((scanError as any)?.message || scanError))) return matcherError;
+	return scanError;
+}
+
 // A coarse, content-free reason for a failed tool step, for telemetry: the
 // kind of failure only, never page text, arguments, or the error message.
 function classifyToolFailureTrace(trace: any, context: { pdf?: boolean } = {}) {
@@ -2006,7 +2080,14 @@ function classifyToolFailureTrace(trace: any, context: { pdf?: boolean } = {}) {
 	if (isGuardrailBlockedTrace(trace) || text.startsWith("guardrail blocked")) return "guard";
 	if (/timed? ?out|timeout|took too long/.test(text)) return "timeout";
 	if (/on the page but hidden/.test(text)) return "hidden";
-	if (/no (visible )?(pdf |readable )?text matched|not found on (the )?page|could not (find|locate)|no match/.test(text)) {
+	// Refusals that never reach a matcher, each for its own cause: a PDF shown
+	// where Onhand can't mark it (a viewer without a text layer, or an embed
+	// inside a web page), a tab that isn't a web page, and a region highlight
+	// the PDF viewer turned down.
+	if (/unsupported pdf annotation surface|pdf in an embedded viewer|no readable text layer|does not expose selectable page text/.test(text)) return "pdf_surface";
+	if (/only run on web or local-file tabs/.test(text)) return "tab_kind";
+	if (/region highlight requires|instead of a region|region rect resolved/.test(text)) return "region";
+	if (/no (visible )?(pdf |readable )?text matched|not found on (the )?page|could not (find|locate)|no match|saved source text is not currently loaded/.test(text)) {
 		if (trace?.toolName !== "browser_highlight_text") return "no_match";
 		if (/matched that formula/.test(text)) return "formula";
 		// A missed highlight says which kind of miss it was, still without any
@@ -2024,7 +2105,10 @@ function classifyToolFailureTrace(trace: any, context: { pdf?: boolean } = {}) {
 	if (/cannot access|cannot be scripted|chrome:\/\/|chrome-extension:\/\/|restricted|permission|not allowed/.test(text)) return "restricted";
 	if (/navigat|page (changed|reloaded)|back\/forward cache/.test(text)) return "page_changed";
 	if (/failed to fetch|network|net::|\b(403|404|429|500|502|503)\b/.test(text)) return "network";
-	if (/invalid|expected|required|must be|schema|validation/.test(text)) return "bad_args";
+	// The address was not a PDF after all, or the viewer could not load it.
+	if (/web page, not a pdf|could not determine a pdf url/.test(text)) return "not_pdf";
+	if (/failed to load the pdf|invalid pdf structure|no pdf page text returned|no pdf document is loaded/.test(text)) return "pdf_load";
+	if (/invalid|expected|required|\brequires\b|must be|schema|validation/.test(text)) return "bad_args";
 	return "other";
 }
 
@@ -12163,6 +12247,9 @@ export const __browserRuntimeTest = {
 	rewriteHighlightTextToRecentReadableExactPhraseForTest: rewriteHighlightTextToRecentReadableExactPhrase,
 	rewriteComparisonHighlightTextForTest: (value: unknown, _prompt: unknown, request: any) => rewriteHighlightTextToRecentReadableExactPhrase(value, request),
 	shouldAbortAfterRepeatedHighlightFailuresForTest: shouldAbortAfterRepeatedHighlightFailures,
+	shouldStopHighlightingAfterMissesForTest: shouldStopHighlightingAfterMisses,
+	highlightTargetIsOnhandPdfViewerForTest: highlightTargetIsOnhandPdfViewer,
+	preferredHighlightMissErrorForTest: preferredHighlightMissError,
 	buildPlannerAnchorCandidates,
 	buildReplayAnnotationsFromPageActions,
 	computeDueReviews,
@@ -12819,7 +12906,7 @@ function createTools(
 						try {
 							result = await tryHighlightScanFallback(params, lastError);
 						} catch (fallbackError) {
-							lastError = fallbackError || lastError;
+							lastError = preferredHighlightMissError(lastError, fallbackError);
 						}
 					}
 					if (!result) throw lastError;
@@ -14026,7 +14113,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			return /source not found|saved source text is not currently loaded|no annotation found|no visible text matched/.test(message);
 		}
 		if (/^sidebar:(?:realtime-)?browser-tool$/.test(messageType)) {
-			return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no (?:visible|readable) (?:pdf )?text matched|on the page but hidden|no image or figure matched/.test(message);
+			// A tool called with nothing to act on, or sent to an address that
+			// turned out to be a web page, is answered with that message; neither
+			// is a crash.
+			return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no (?:visible|readable) (?:pdf )?text matched|on the page but hidden|no image or figure matched|requires (?:a )?non-empty|web page, not a pdf/.test(message);
 		}
 		// A PDF link that no longer exists is the source site's problem.
 		if (messageType === "pdf-viewer:load-authorized-source" && /\(http (?:404|410)\)/.test(message)) return true;
@@ -15600,6 +15690,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 						tabId = Number(pickActiveTab(state, activeRequest?.targetWindowId)?.id || 0);
 					}
 					if (!Number.isFinite(tabId) || tabId <= 0) return null;
+					if (highlightTargetIsOnhandPdfViewer(activeRequest, tabId)) return null;
 					return await highlightTextWithReplayCandidates(tabId, text, {
 						...(effectiveParams || {}),
 						scanPage: true,
@@ -18825,6 +18916,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 									tabId = Number(pickActiveTab(state, activeRequest?.targetWindowId)?.id || 0);
 								}
 								if (!Number.isFinite(tabId) || tabId <= 0) return null;
+								if (highlightTargetIsOnhandPdfViewer(activeRequest, tabId)) return null;
 								return await highlightTextWithReplayCandidates(tabId, text, {
 									...(effectiveParams || {}),
 									scanPage: true,

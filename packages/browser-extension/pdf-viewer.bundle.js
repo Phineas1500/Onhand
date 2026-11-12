@@ -27041,6 +27041,9 @@ async function describePdfTextLayer() {
   if (!failedPageNumbers.length) cachedPdfTextLayerInfo = info2;
   return info2;
 }
+function foldTypesetPunctuation(value) {
+  return value.replace(/[\u2018\u2019\u201B\u2032]/g, "'").replace(/[\u201C\u201D\u201F\u2033]/g, '"').replace(/[\u2010-\u2015\u2212]/g, "-");
+}
 async function pdfSearch(options = {}) {
   const query = String(options.query || options.text || "").trim();
   if (!query) throw new Error("PDF search requires a non-empty query.");
@@ -27048,7 +27051,7 @@ async function pdfSearch(options = {}) {
   const maxContextChars = Math.max(40, Math.min(1e3, Number(options.maxContextChars || 220) || 220));
   const pages = getPdfPages();
   const totalPageCount = Math.max(Number(pdfDocument?.numPages || 0), pages.length);
-  const normalizedQuery = normalizeText(query).toLowerCase();
+  const normalizedQuery = foldTypesetPunctuation(normalizeText(query).toLowerCase());
   const matches = [];
   const searchedPageNumbers = [];
   const failedPageNumbers = [];
@@ -27066,7 +27069,7 @@ async function pdfSearch(options = {}) {
       failedPageNumbers.push(pageNumber);
       continue;
     }
-    const lowerText = pageText.toLowerCase();
+    const lowerText = foldTypesetPunctuation(pageText.toLowerCase());
     let fromIndex = 0;
     for (let occurrence = 1; ; occurrence += 1) {
       const index = normalizedQuery ? lowerText.indexOf(normalizedQuery, fromIndex) : -1;

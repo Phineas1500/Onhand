@@ -1271,6 +1271,24 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 
 	const hasPdfEmbedElement = () => Boolean(findPdfEmbedElement());
 
+	// The address of the PDF a page embeds (not the page's own address, which
+	// on a publisher's "PDF" page looks like a PDF too).
+	const getEmbeddedPdfUrl = () => {
+		const embed = findPdfEmbedElement();
+		if (!(embed instanceof Element)) return null;
+		for (const attr of ["src", "data"]) {
+			const raw = embed.getAttribute(attr);
+			if (!raw) continue;
+			const resolved = resolvePdfUrl(raw) || getPdfUrlFromUrlParameters(raw);
+			if (resolved) return resolved;
+			try {
+				const url = new URL(raw, location.href);
+				if (/^https?:$/i.test(url.protocol)) return url.href;
+			} catch {}
+		}
+		return null;
+	};
+
 	const hasOnhandPdfViewerDocumentSignal = () =>
 		Boolean(
 			document.body?.getAttribute?.("data-onhand-pdf-rendered") === "true" ||
@@ -1405,6 +1423,15 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			node.remove();
 		}
 		return normalizeText(clone.textContent || "");
+	};
+
+	// The browser's built-in PDF viewer, Onhand's viewer and the Scholar reader
+	// are PDF surfaces through and through. A page with words of its own around
+	// an embedded PDF is a web page.
+	const isWebPageAroundPdf = () => {
+		if (document.contentType === "application/pdf") return false;
+		if (hasOnhandPdfViewerDocumentSignal() || isGoogleScholarPdfReader() || hasGoogleScholarReaderFrameEmbed()) return false;
+		return getPdfLayerReadableText(document.body).length > 0;
 	};
 
 	const getAnnotationSurfaceInfo = () => {
@@ -4450,7 +4477,7 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		const occurrence = Math.max(1, Math.min(20, Number(options.occurrence || 1) || 1));
 		const clearExisting = options.clearExisting === true;
 		const scrollIntoView = options.scrollIntoView !== false;
-		const exactOnly = Boolean(options.exactOnly || options.allowApproximate === false);
+		let exactOnly = Boolean(options.exactOnly || options.allowApproximate === false);
 		const htmlAnchor = parseHtmlHighlightAnchor(options.anchor);
 		const highlightQueries = {
 			normalizedQuery,
@@ -4484,11 +4511,18 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 					surface: annotationSurface,
 				});
 			}
-			if (annotationSurface.surface === "pdf") {
+			// A web page that shows a PDF in an embed or frame (a course page, a
+			// publisher's "PDF" page) still has words of its own, and those can be
+			// marked. Only its exact words: a quote from the PDF must not land on
+			// page text that merely resembles it. A page with no words of its own
+			// (the browser's built-in viewer) has nothing here to mark.
+			const webPageAroundPdf = annotationSurface.surface === "pdf" && isWebPageAroundPdf();
+			if (annotationSurface.surface === "pdf" && !webPageAroundPdf) {
 				throw new Error(
 					`Unsupported PDF annotation surface: ${annotationSurface.unsupportedReason || "this PDF viewer does not expose selectable page text to Onhand yet"}`,
 				);
 			}
+			if (webPageAroundPdf) exactOnly = true;
 			if (options.reuseExisting) {
 			const existing = findExistingAnnotationByText(rawQuery, occurrence);
 			if (existing?.annotationElement) {
@@ -4853,6 +4887,13 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			// No quote in this message: unlike "No visible text matched: …",
 			// nothing downstream strips page text from it.
 			throw new Error("That text is on the page but hidden (in a collapsed or inactive section), so it cannot be highlighted.");
+		}
+		if (webPageAroundPdf) {
+			// The quote may be from the PDF, which can't be marked inside the page.
+			const embeddedPdfUrl = getEmbeddedPdfUrl();
+			throw new Error(
+				`No visible text matched: ${query}\nThis page shows a PDF in an embedded viewer that Onhand cannot mark in place. If the quote is from that PDF, open it with browser_open_pdf_in_onhand_viewer${embeddedPdfUrl ? ` (pdfUrl: ${embeddedPdfUrl})` : ""} and highlight it there.`,
+			);
 		}
 		throw new Error(`No visible text matched: ${query}`);
 	};

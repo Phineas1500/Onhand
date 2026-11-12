@@ -727,7 +727,27 @@ async function loadAuthorizedPdfBytesFromTab(sender, pdfUrl) {
 		throw new Error("The authenticated PDF retry no longer matches the source tab.");
 	}
 
-	const bytes = await withDebugger(tabId, async ({ target, send }) => {
+	let bytes;
+	try {
+		bytes = await loadPdfBytesThroughTabDebugger(tabId, pdfUrl);
+	} catch (error) {
+		// Chrome refuses a debugger on a tab that holds another extension's
+		// frame (a PDF reader or a password manager laid over the page). The
+		// page can still ask for its own file, signed in as the reader is.
+		if (!isRestrictedScriptingError(error) || !isHttpLikeUrl(tab.url)) throw error;
+		bytes = await loadPdfBytesFromTabDocument(tabId, pdfUrl);
+	}
+	if (!bytes.byteLength || !looksLikePdfBytes(bytes)) {
+		throw new Error("The authenticated browser tab returned a non-PDF response.");
+	}
+	return {
+		dataBase64: encodeBytesAsBase64(bytes),
+		byteLength: bytes.byteLength,
+	};
+}
+
+async function loadPdfBytesThroughTabDebugger(tabId, pdfUrl) {
+	return await withDebugger(tabId, async ({ target, send }) => {
 		await send("Page.enable");
 		const frameTree = await send("Page.getFrameTree");
 		const frameId = frameTree?.frameTree?.frame?.id;
@@ -752,13 +772,48 @@ async function loadAuthorizedPdfBytesFromTab(sender, pdfUrl) {
 		}
 		return await readDebuggerStream(send, resource.stream);
 	});
-	if (!bytes.byteLength || !looksLikePdfBytes(bytes)) {
-		throw new Error("The authenticated browser tab returned a non-PDF response.");
+}
+
+// The same request made by the tab's own document, for tabs the debugger
+// can't attach to. The tab is showing this address, so the request is to its
+// own site and carries the reader's sign-in.
+async function loadPdfBytesFromTabDocument(tabId, pdfUrl) {
+	const loaded = await withOperationTimeout(
+		executeScriptInTab(
+			tabId,
+			async (url, maxBytes) => {
+				try {
+					// The tab has usually just loaded this file, and a download link
+					// that works once would refuse a second request: take the copy
+					// the browser kept when it has one.
+					const response = await fetch(url, { credentials: "include", cache: "force-cache" });
+					if (!response.ok) return { error: `HTTP ${response.status}` };
+					const bytes = new Uint8Array(await response.arrayBuffer());
+					if (bytes.byteLength > maxBytes) return { tooLarge: true };
+					let binary = "";
+					for (let offset = 0; offset < bytes.byteLength; offset += 0x8000) {
+						binary += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.byteLength, offset + 0x8000)));
+					}
+					return { dataBase64: btoa(binary) };
+				} catch (error) {
+					return { error: String(error?.message || error) };
+				}
+			},
+			[pdfUrl, ONHAND_AUTHENTICATED_PDF_MAX_BYTES],
+		),
+		ONHAND_AUTHENTICATED_PDF_LOAD_TIMEOUT_MS,
+		"Timed out loading the PDF through its authenticated browser tab.",
+	);
+	if (loaded?.tooLarge) {
+		throw new Error(`The protected PDF is larger than Onhand's ${Math.floor(ONHAND_AUTHENTICATED_PDF_MAX_BYTES / 1024 / 1024)} MB browser-context limit.`);
 	}
-	return {
-		dataBase64: encodeBytesAsBase64(bytes),
-		byteLength: bytes.byteLength,
-	};
+	if (typeof loaded?.dataBase64 !== "string") {
+		throw new Error(`The authenticated browser tab could not load the PDF${loaded?.error ? ` (${loaded.error})` : ""}.`);
+	}
+	const binary = atob(loaded.dataBase64);
+	const bytes = new Uint8Array(binary.length);
+	for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+	return bytes;
 }
 
 function grantOnhandPdfViewerFileSource(fileUrl) {
@@ -5677,6 +5732,24 @@ const createPageToolkit = (options = {}) => {
 
 	const hasPdfEmbedElement = () => Boolean(findPdfEmbedElement());
 
+	// The address of the PDF a page embeds (not the page's own address, which
+	// on a publisher's "PDF" page looks like a PDF too).
+	const getEmbeddedPdfUrl = () => {
+		const embed = findPdfEmbedElement();
+		if (!(embed instanceof Element)) return null;
+		for (const attr of ["src", "data"]) {
+			const raw = embed.getAttribute(attr);
+			if (!raw) continue;
+			const resolved = resolvePdfUrl(raw) || getPdfUrlFromUrlParameters(raw);
+			if (resolved) return resolved;
+			try {
+				const url = new URL(raw, location.href);
+				if (/^https?:$/i.test(url.protocol)) return url.href;
+			} catch {}
+		}
+		return null;
+	};
+
 	const hasOnhandPdfViewerDocumentSignal = () =>
 		Boolean(
 			document.body?.getAttribute?.("data-onhand-pdf-rendered") === "true" ||
@@ -5811,6 +5884,15 @@ const createPageToolkit = (options = {}) => {
 			node.remove();
 		}
 		return normalizeText(clone.textContent || "");
+	};
+
+	// The browser's built-in PDF viewer, Onhand's viewer and the Scholar reader
+	// are PDF surfaces through and through. A page with words of its own around
+	// an embedded PDF is a web page.
+	const isWebPageAroundPdf = () => {
+		if (document.contentType === "application/pdf") return false;
+		if (hasOnhandPdfViewerDocumentSignal() || isGoogleScholarPdfReader() || hasGoogleScholarReaderFrameEmbed()) return false;
+		return getPdfLayerReadableText(document.body).length > 0;
 	};
 
 	const getAnnotationSurfaceInfo = () => {
@@ -8856,7 +8938,7 @@ const createPageToolkit = (options = {}) => {
 		const occurrence = Math.max(1, Math.min(20, Number(options.occurrence || 1) || 1));
 		const clearExisting = options.clearExisting === true;
 		const scrollIntoView = options.scrollIntoView !== false;
-		const exactOnly = Boolean(options.exactOnly || options.allowApproximate === false);
+		let exactOnly = Boolean(options.exactOnly || options.allowApproximate === false);
 		const htmlAnchor = parseHtmlHighlightAnchor(options.anchor);
 		const highlightQueries = {
 			normalizedQuery,
@@ -8890,11 +8972,18 @@ const createPageToolkit = (options = {}) => {
 					surface: annotationSurface,
 				});
 			}
-			if (annotationSurface.surface === "pdf") {
+			// A web page that shows a PDF in an embed or frame (a course page, a
+			// publisher's "PDF" page) still has words of its own, and those can be
+			// marked. Only its exact words: a quote from the PDF must not land on
+			// page text that merely resembles it. A page with no words of its own
+			// (the browser's built-in viewer) has nothing here to mark.
+			const webPageAroundPdf = annotationSurface.surface === "pdf" && isWebPageAroundPdf();
+			if (annotationSurface.surface === "pdf" && !webPageAroundPdf) {
 				throw new Error(
 					`Unsupported PDF annotation surface: ${annotationSurface.unsupportedReason || "this PDF viewer does not expose selectable page text to Onhand yet"}`,
 				);
 			}
+			if (webPageAroundPdf) exactOnly = true;
 			if (options.reuseExisting) {
 			const existing = findExistingAnnotationByText(rawQuery, occurrence);
 			if (existing?.annotationElement) {
@@ -9259,6 +9348,13 @@ const createPageToolkit = (options = {}) => {
 			// No quote in this message: unlike "No visible text matched: …",
 			// nothing downstream strips page text from it.
 			throw new Error("That text is on the page but hidden (in a collapsed or inactive section), so it cannot be highlighted.");
+		}
+		if (webPageAroundPdf) {
+			// The quote may be from the PDF, which can't be marked inside the page.
+			const embeddedPdfUrl = getEmbeddedPdfUrl();
+			throw new Error(
+				`No visible text matched: ${query}\nThis page shows a PDF in an embedded viewer that Onhand cannot mark in place. If the quote is from that PDF, open it with browser_open_pdf_in_onhand_viewer${embeddedPdfUrl ? ` (pdfUrl: ${embeddedPdfUrl})` : ""} and highlight it there.`,
+			);
 		}
 		throw new Error(`No visible text matched: ${query}`);
 	};
@@ -11419,6 +11515,16 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 				onhandFrameFallbackError = frameError;
 			}
 		}
+		// Onhand's viewer is on this tab and searched the PDF: its miss stands.
+		// No other frame holds the PDF's text, and trying each of them after
+		// every missed quote cost the turn about a third of a second per try.
+		if (
+			methodName === "highlightText" &&
+			onhandFrameFallbackError &&
+			/No (?:visible|readable) text matched/i.test(String(onhandFrameFallbackError?.message || onhandFrameFallbackError))
+		) {
+			throw onhandFrameFallbackError;
+		}
 		if (mainFrameScriptingRestricted) {
 			// Do not convert Chrome's scripting access denial (for example
 			// missing host permission or a protected page) into a whole-tab
@@ -11936,9 +12042,113 @@ async function findExistingPdfViewerTab(pdfUrl, windowId) {
 	return matches.find((tab) => tab.active) || matches[0] || null;
 }
 
+const WEB_PAGE_AT_PDF_ADDRESS_MESSAGE =
+	"This tab is a web page, not a PDF file, although its address looks like one, so it was not opened in Onhand's PDF viewer. Read it with the page tools. If it links to the PDF file itself, open that link with pdfUrl.";
+
+// What an http(s) address returns: true for a PDF, false for a web page, and
+// null when it can't be told (the request failed, or the answer was neither).
+async function probeAddressIsPdf(url, timeoutMs = 3000) {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const response = await fetch(url, { credentials: "include", headers: { Range: "bytes=0-1023" }, signal: controller.signal });
+		const type = String(response.headers.get("content-type") || "").toLowerCase();
+		if (type.includes("application/pdf")) return true;
+		// Every PDF starts with "%PDF-", whatever the server calls it.
+		let head = "";
+		const reader = response.body?.getReader?.();
+		if (reader) {
+			const { value } = await reader.read();
+			head = new TextDecoder("latin1").decode((value || new Uint8Array()).subarray(0, 1024));
+			await reader.cancel().catch(() => {});
+		}
+		if (head.includes("%PDF-")) return true;
+		if (/text\/html|application\/xhtml/.test(type) || /<!doctype html|<html[\s>]/i.test(head)) return false;
+		return null;
+	} catch {
+		return null;
+	} finally {
+		clearTimeout(timer);
+		controller.abort();
+	}
+}
+
+// An address can look like a PDF and still be a web page: publishers serve
+// ".../doi/pdf/..." as a page with the PDF in a frame. Mounting the viewer on
+// such a page loaded its HTML as a PDF ("Invalid PDF structure") and the
+// question went unanswered. Returns null for a real PDF, and whenever that
+// can't be ruled out; otherwise the PDF the page embeds, if it has one.
+async function describeWebPageAtPdfAddress(tab, pdfUrl) {
+	if (typeof tab?.id !== "number" || !isHttpLikeUrl(pdfUrl) || !isHttpLikeUrl(tab.url)) return null;
+	let page;
+	try {
+		page = await withOperationTimeout(
+			executeScriptInTab(
+				tab.id,
+				(scholarReaderPrefix) => {
+					const frames = [];
+					for (const element of document.querySelectorAll("embed, object, iframe")) {
+						const raw = element.getAttribute("src") || element.getAttribute("data") || "";
+						let url = "";
+						try {
+							const parsed = new URL(raw, location.href);
+							if (/^https?:$/.test(parsed.protocol)) url = parsed.href;
+						} catch {}
+						if (!url) continue;
+						const rect = element.getBoundingClientRect();
+						frames.push({
+							url,
+							typed: /application\/pdf/i.test(element.getAttribute("type") || ""),
+							area: Math.round(Math.max(0, rect.width) * Math.max(0, rect.height)),
+						});
+						if (frames.length >= 24) break;
+					}
+					return {
+						contentType: String(document.contentType || "").toLowerCase(),
+						// Onhand's own viewer, or the Scholar reader, already laid over a PDF.
+						reader: Boolean(
+							document.getElementById("onhand-inline-pdf-viewer-root") ||
+								document.querySelector(`.gsr-page, .gsr-text-ctn, iframe[src^="${scholarReaderPrefix}"]`),
+						),
+						frames,
+					};
+				},
+				[`chrome-extension://${GOOGLE_SCHOLAR_READER_EXTENSION_ID}/`],
+			),
+			SCRIPT_EXECUTION_TIMEOUT_MS,
+			"PDF address check timed out.",
+		);
+	} catch {
+		// The browser's own PDF viewer can't always be scripted (Firefox).
+		return null;
+	}
+	if (!page || page.reader || !/^(?:text\/html|application\/xhtml\+xml)$/.test(page.contentType)) return null;
+	if ((await probeAddressIsPdf(pdfUrl)) !== false) return null;
+	const candidates = (Array.isArray(page.frames) ? page.frames : [])
+		.filter((frame) => stripUrlHash(frame.url) !== stripUrlHash(pdfUrl) && (frame.typed || isLikelyPdfResourceUrl(frame.url)))
+		.sort((left, right) => right.area - left.area);
+	return { embeddedPdfUrl: candidates[0]?.url || "" };
+}
+
 async function openPdfInOnhandViewer(args = {}) {
 	const sourceTab = await resolveTargetTab(args);
 	const pdfUrl = resolvePdfSourceUrlForViewer(args, sourceTab);
+	if (pdfTabMatchesSource(sourceTab, pdfUrl) && !isOnhandPdfViewerLikeUrl(sourceTab.url)) {
+		const webPage = await describeWebPageAtPdfAddress(sourceTab, pdfUrl);
+		if (webPage) {
+			if (!webPage.embeddedPdfUrl || args.followedEmbeddedPdf === true) throw new Error(WEB_PAGE_AT_PDF_ADDRESS_MESSAGE);
+			log("PDF-looking address is a web page; opening the PDF it embeds", sourceTab.id);
+			// Keep the page: the PDF opens beside it, in its own tab.
+			return await openPdfInOnhandViewer({
+				...args,
+				tabId: sourceTab.id,
+				pdfUrl: webPage.embeddedPdfUrl,
+				newTab: true,
+				disableSelectionHandoff: true,
+				followedEmbeddedPdf: true,
+			});
+		}
+	}
 	if (isFileUrl(pdfUrl) && (IS_FIREFOX || !(await isAllowedFileSchemeAccess()))) {
 		// Firefox extensions can't read file:// URLs at all, and Chrome lets them
 		// only after the reader allows file access. Either way the viewer asks the
@@ -12148,6 +12358,30 @@ async function openPdfInOnhandViewer(args = {}) {
 		let stepStartedAt = Date.now();
 		const finalTab = waitForLoad ? await waitForTabComplete(targetTab.id, timeoutMs) : await chrome.tabs.get(targetTab.id);
 		markStage("tabLoad", stepStartedAt);
+		// A tab opened or navigated for this address (the source tab's own
+		// address was checked above): make sure a PDF arrived before laying the
+		// viewer over it.
+		const openedForAddress = targetTab.id !== sourceTab.id || stripUrlHash(sourceTab.url || "") !== stripUrlHash(finalTab?.url || "");
+		if (waitForLoad && openedForAddress) {
+			const webPage = await describeWebPageAtPdfAddress(finalTab, stripUrlHash(finalTab?.url || pdfUrl));
+			if (webPage) {
+				// A tab Onhand opened for this address is Onhand's to reuse or close.
+				const ownsTab = shouldOpenViewerInNewTab || args.detachedNewTab === true;
+				if (webPage.embeddedPdfUrl && args.followedEmbeddedPdf !== true) {
+					return await openPdfInOnhandViewer({
+						...args,
+						tabId: finalTab.id,
+						pdfUrl: webPage.embeddedPdfUrl,
+						newTab: false,
+						detachedNewTab: ownsTab,
+						disableSelectionHandoff: true,
+						followedEmbeddedPdf: true,
+					});
+				}
+				if (ownsTab) await chrome.tabs.remove(finalTab.id).catch(() => {});
+				throw new Error(WEB_PAGE_AT_PDF_ADDRESS_MESSAGE.replace("This tab is", "That address is"));
+			}
+		}
 		stepStartedAt = Date.now();
 		await ensureInlinePdfViewerBridgeToken(pdfUrl);
 		grantOnhandPdfViewerCredentialedSource(finalTab.id, pdfUrl);

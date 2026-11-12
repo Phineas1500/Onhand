@@ -89092,9 +89092,39 @@ function shouldAbortAfterRepeatedHighlightFailures(request2) {
   const failureLimit = asksForExternalOrLinkedSource && hasReadableSourceContent ? 1 : asksForExternalOrLinkedSource ? 2 : promptAsksForCompactPageTeaching(prompt) && !promptAsksForStructuredPageSourceMarker(prompt) && !promptAsksForComparison(prompt) ? COMPACT_TEACHING_HIGHLIGHT_FAILURE_ABORT_LIMIT : HIGHLIGHT_FAILURE_ABORT_LIMIT;
   return traces.filter(isCountableHighlightFailureTrace).length >= failureLimit;
 }
+var HIGHLIGHT_FAILURE_TURN_LIMIT = 8;
+function highlightMissesSinceLastLandedHighlight(request2) {
+  const traces = highlightFailureBudgetTraceWindow(request2);
+  let lastLanded = -1;
+  traces.forEach((trace, index) => {
+    if (isCompletedSourceHighlightTrace(trace)) lastLanded = index;
+  });
+  if (lastLanded < 0) return 0;
+  return traces.slice(lastLanded + 1).filter(isCountableHighlightFailureTrace).length;
+}
+function shouldStopHighlightingAfterMisses(request2) {
+  if (!request2 || request2.aborted) return false;
+  return highlightMissesSinceLastLandedHighlight(request2) >= HIGHLIGHT_FAILURE_ABORT_LIMIT || countCountableHighlightFailureTraces(request2) >= HIGHLIGHT_FAILURE_TURN_LIMIT;
+}
 function buildRepeatedHighlightFailureGuardResult(toolName2, commandName, request2) {
   if (commandName !== "highlight_text") return null;
-  if (!shouldAbortAfterRepeatedHighlightFailures(request2)) return null;
+  if (!shouldAbortAfterRepeatedHighlightFailures(request2)) {
+    if (!shouldStopHighlightingAfterMisses(request2)) return null;
+    const landed = (Array.isArray(request2?.toolTraces) ? request2.toolTraces : []).some(isCompletedSourceHighlightTrace);
+    return {
+      guardrail: {
+        kind: "repeated_highlight_failure",
+        blockedTool: toolName2,
+        blockedCommand: commandName,
+        message: [
+          "Several highlight attempts have failed this turn, and each retry costs the user time.",
+          `Do not call ${toolName2} again for this turn.`,
+          landed ? "Keep the highlights that landed and finish the answer from what you have already read." : "Answer the user's question now from the readable page content.",
+          "Do not mention highlight failures, source-marker status, or claim more of the page is highlighted than is. Do not use horizontal rules."
+        ].join(" ")
+      }
+    };
+  }
   const prompt = request2?.displayPrompt || request2?.prompt || "";
   const hasReadableSourceContent = hasReadableSourceContentAfterLatestNavigation(request2);
   const shouldTryAlternateSource = (promptAsksForExternalBrowsing(prompt) || promptAsksForLinkedPageNavigation(prompt)) && !hasReadableSourceContent;
@@ -89176,12 +89206,32 @@ function buildRepeatedToolFailureAnswerNowGuardResult(toolName2, commandName, re
     }
   };
 }
+function highlightTargetIsOnhandPdfViewer(request2, tabId) {
+  if (!Number.isFinite(tabId) || tabId <= 0) return false;
+  const initialTab = request2?.initialActiveTab;
+  if (Number(initialTab?.id) === tabId && isOnhandPdfViewerUrl(initialTab?.url)) return true;
+  return (Array.isArray(request2?.toolTraces) ? request2.toolTraces : []).some((trace) => {
+    if (trace?.state !== "complete") return false;
+    const details = trace?.resultDetails || trace?.details || {};
+    if (Number(details?.tab?.id) !== tabId) return false;
+    return /^browser_(?:pdf_|open_pdf_in_onhand_viewer$)/.test(String(trace?.toolName || "")) || details?.annotation?.kind === "pdf" || isOnhandPdfViewerUrl(details?.tab?.url);
+  });
+}
+var REPLAY_MISSING_SOURCE_PATTERN = /^Saved source text is not currently loaded in this page/i;
+function preferredHighlightMissError(matcherError, scanError) {
+  if (!scanError) return matcherError;
+  if (matcherError && REPLAY_MISSING_SOURCE_PATTERN.test(String(scanError?.message || scanError))) return matcherError;
+  return scanError;
+}
 function classifyToolFailureTrace(trace, context = {}) {
   const text = String(trace?.error || trace?.resultSummary || "").toLowerCase();
   if (isGuardrailBlockedTrace(trace) || text.startsWith("guardrail blocked")) return "guard";
   if (/timed? ?out|timeout|took too long/.test(text)) return "timeout";
   if (/on the page but hidden/.test(text)) return "hidden";
-  if (/no (visible )?(pdf |readable )?text matched|not found on (the )?page|could not (find|locate)|no match/.test(text)) {
+  if (/unsupported pdf annotation surface|pdf in an embedded viewer|no readable text layer|does not expose selectable page text/.test(text)) return "pdf_surface";
+  if (/only run on web or local-file tabs/.test(text)) return "tab_kind";
+  if (/region highlight requires|instead of a region|region rect resolved/.test(text)) return "region";
+  if (/no (visible )?(pdf |readable )?text matched|not found on (the )?page|could not (find|locate)|no match|saved source text is not currently loaded/.test(text)) {
     if (trace?.toolName !== "browser_highlight_text") return "no_match";
     if (/matched that formula/.test(text)) return "formula";
     const base = /closest text only shares part/.test(text) ? "weak" : "no_match";
@@ -89195,7 +89245,9 @@ function classifyToolFailureTrace(trace, context = {}) {
   if (/cannot access|cannot be scripted|chrome:\/\/|chrome-extension:\/\/|restricted|permission|not allowed/.test(text)) return "restricted";
   if (/navigat|page (changed|reloaded)|back\/forward cache/.test(text)) return "page_changed";
   if (/failed to fetch|network|net::|\b(403|404|429|500|502|503)\b/.test(text)) return "network";
-  if (/invalid|expected|required|must be|schema|validation/.test(text)) return "bad_args";
+  if (/web page, not a pdf|could not determine a pdf url/.test(text)) return "not_pdf";
+  if (/failed to load the pdf|invalid pdf structure|no pdf page text returned|no pdf document is loaded/.test(text)) return "pdf_load";
+  if (/invalid|expected|required|\brequires\b|must be|schema|validation/.test(text)) return "bad_args";
   return "other";
 }
 var TOOL_FAILURE_REASONS_MAX_CHARS = 160;
@@ -96431,6 +96483,9 @@ var __browserRuntimeTest = {
   rewriteHighlightTextToRecentReadableExactPhraseForTest: rewriteHighlightTextToRecentReadableExactPhrase,
   rewriteComparisonHighlightTextForTest: (value, _prompt, request2) => rewriteHighlightTextToRecentReadableExactPhrase(value, request2),
   shouldAbortAfterRepeatedHighlightFailuresForTest: shouldAbortAfterRepeatedHighlightFailures,
+  shouldStopHighlightingAfterMissesForTest: shouldStopHighlightingAfterMisses,
+  highlightTargetIsOnhandPdfViewerForTest: highlightTargetIsOnhandPdfViewer,
+  preferredHighlightMissErrorForTest: preferredHighlightMissError,
   buildPlannerAnchorCandidates,
   buildReplayAnnotationsFromPageActions,
   computeDueReviews,
@@ -96986,7 +97041,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
             try {
               result = await tryHighlightScanFallback(params, lastError);
             } catch (fallbackError) {
-              lastError = fallbackError || lastError;
+              lastError = preferredHighlightMissError(lastError, fallbackError);
             }
           }
           if (!result) throw lastError;
@@ -98105,7 +98160,7 @@ function createOnhandBrowserRuntime(host) {
       return /source not found|saved source text is not currently loaded|no annotation found|no visible text matched/.test(message);
     }
     if (/^sidebar:(?:realtime-)?browser-tool$/.test(messageType)) {
-      return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no (?:visible|readable) (?:pdf )?text matched|on the page but hidden|no image or figure matched/.test(message);
+      return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no (?:visible|readable) (?:pdf )?text matched|on the page but hidden|no image or figure matched|requires (?:a )?non-empty|web page, not a pdf/.test(message);
     }
     if (messageType === "pdf-viewer:load-authorized-source" && /\(http (?:404|410)\)/.test(message)) return true;
     return false;
@@ -99488,6 +99543,7 @@ function createOnhandBrowserRuntime(host) {
             tabId = Number(pickActiveTab(state2, activeRequest?.targetWindowId)?.id || 0);
           }
           if (!Number.isFinite(tabId) || tabId <= 0) return null;
+          if (highlightTargetIsOnhandPdfViewer(activeRequest, tabId)) return null;
           return await highlightTextWithReplayCandidates(tabId, text, {
             ...effectiveParams || {},
             scanPage: true,
@@ -102351,6 +102407,7 @@ Mark and answer from this text. Call browser_extract_content again only to conti
                   tabId = Number(pickActiveTab(state2, activeRequest?.targetWindowId)?.id || 0);
                 }
                 if (!Number.isFinite(tabId) || tabId <= 0) return null;
+                if (highlightTargetIsOnhandPdfViewer(activeRequest, tabId)) return null;
                 return await highlightTextWithReplayCandidates(tabId, text, {
                   ...effectiveParams || {},
                   scanPage: true,

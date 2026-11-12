@@ -9,6 +9,7 @@ import { runFeatureUsageRegressions } from "./lib/feature-usage-regressions.mjs"
 import { runContextMenuRegressions } from "./lib/context-menu-regressions.mjs";
 import { runSessionNotesRegressions } from "./lib/session-notes-regressions.mjs";
 import { runHighlightMissRegressions } from "./lib/highlight-miss-regressions.mjs";
+import { runHighlightRefusalRegressions } from "./lib/highlight-refusal-regressions.mjs";
 import assert from "node:assert/strict";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
@@ -1447,6 +1448,16 @@ async function assertSentryDiagnosticsGateAndScrub() {
 				label: "browser tool target miss",
 				messageType: "sidebar:browser-tool",
 				message: "Onhand page tools only run on web or local-file tabs, not Onhand Sidebar",
+			},
+			{
+				label: "browser tool called with no text",
+				messageType: "sidebar:browser-tool",
+				message: "highlight_text requires a non-empty 'text'",
+			},
+			{
+				label: "voice PDF open on a web page with a PDF-looking address",
+				messageType: "sidebar:realtime-browser-tool",
+				message: "This tab is a web page, not a PDF file, although its address looks like one, so it was not opened in Onhand's PDF viewer.",
 			},
 			{
 				label: "voice figure miss",
@@ -13529,6 +13540,7 @@ async function main() {
 	await runContextMenuRegressions();
 	await runSessionNotesRegressions({ installChromeStorageStub });
 	await runHighlightMissRegressions({ installChromeStorageStub });
+	await runHighlightRefusalRegressions({ installChromeStorageStub });
 	await assertPreparationCanBeStoppedWithoutLateContinuation();
 	await assertColdSubmissionAndSessionTransitionsAreExclusive();
 	await assertStorageFailuresDoNotWedgeRequests();

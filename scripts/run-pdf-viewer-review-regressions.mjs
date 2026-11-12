@@ -69,7 +69,7 @@ async function assertExtractionCoverage() {
 		sourceUrl: "https://example.test/fixture.pdf",
 		document: { title: "Fixture" },
 	};
-	const viewer = loadFunctions(["normalizeText", "getPageTextContent", "describePdfTextLayer", "pdfSearch", "pdfReadPages"], dependencies);
+	const viewer = loadFunctions(["normalizeText", "foldTypesetPunctuation", "getPageTextContent", "describePdfTextLayer", "pdfSearch", "pdfReadPages"], dependencies);
 	await assert.rejects(viewer.getPageTextContent(2), /Damaged page stream/);
 	assert.equal(pageTextContentCache.has(2), false, "failed extraction must remain retryable");
 	const search = await viewer.pdfSearch({ query: "absent needle" });
@@ -94,6 +94,28 @@ async function assertExtractionCoverage() {
 	const successfulRead = await viewer.pdfReadPages();
 	assert.equal(successfulRead.incomplete, false);
 	assert.equal(successfulRead.blockCount, 2);
+
+	// A typed ' " or - finds a PDF's typeset one: searching the IRS W-4 for
+	// "Employee's Withholding Certificate" found nothing, because the form
+	// sets its title with a curly apostrophe.
+	const typeset = loadFunctions(["normalizeText", "foldTypesetPunctuation", "getPageTextContent", "describePdfTextLayer", "pdfSearch"], {
+		...dependencies, pageTextContentCache: new Map(), cachedPdfTextLayerInfo: null,
+		pdfDocument: { numPages: 1, async getPage() {
+			return { async getTextContent() { return { items: [{ str: "Form W-4 Employee\u2019s Withholding Certificate \u2013 \u201cStep 1\u201d", hasEOL: true }] }; } };
+		} },
+		getPdfPages: () => pages.slice(0, 1),
+		snippetForMatch: (_text, matchedText) => ({ before: "", after: "", snippet: matchedText }),
+		findMappedTextRange: () => null,
+		buildPdfAnchor: () => ({}),
+		visibleEnough: () => true,
+	});
+	for (const query of ["Employee's Withholding Certificate", "employee\u2019s withholding certificate", 'Certificate - "Step 1"']) {
+		const found = await typeset.pdfSearch({ query });
+		assert.equal(found.matchCount, 1, `a typed query finds typeset punctuation: ${query}`);
+	}
+	const typesetMatch = (await typeset.pdfSearch({ query: "Employee's Withholding" })).matches[0];
+	assert.equal(typesetMatch.matchedText, "Employee\u2019s Withholding", "the match is reported in the page's own characters");
+	assert.equal((await typeset.pdfSearch({ query: "Employer's Withholding Certificate" })).matchCount, 0, "other words still have to match");
 
 	const blank = loadFunctions(["normalizeText", "getPageTextContent", "describePdfTextLayer"], {
 		...dependencies, pageTextContentCache: new Map(), cachedPdfTextLayerInfo: null,
