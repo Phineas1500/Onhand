@@ -12530,8 +12530,9 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	// event, so the load wait polls the tab too (a background PDF opened into
 	// the viewer sat out the 15 s timeout); a tab the navigation just created
 	// skips the existing-viewer probe that set off that navigation.
-	assert.match(backgroundSourceText, /if \(tab\.status === "complete" && !tab\.pendingUrl\) return tab;/);
-	assert.match(backgroundSourceText, /pollId = setInterval\(async \(\) => \{\s*try \{\s*const current = await chrome\.tabs\.get\(tabId\);\s*if \(current\.status !== "complete" \|\| current\.pendingUrl\) return;/, "the load wait polls the tab's status");
+	assert.match(backgroundSourceText, /if \(candidate\.status !== "complete" \|\| candidate\.pendingUrl\) \{\s*navigationShown = true;\s*return false;/, "a loading tab, or one with a pending address, is not loaded");
+	assert.match(backgroundSourceText, /const tab = await chrome\.tabs\.get\(tabId\);\s*if \(loaded\(tab\)\) return tab;/);
+	assert.match(backgroundSourceText, /pollId = setInterval\(async \(\) => \{\s*try \{\s*const current = await chrome\.tabs\.get\(tabId\);\s*if \(!loaded\(current\)\) return;/, "the load wait polls the tab's status");
 	assert.match(backgroundSourceText, /args\.newlyOpenedTab !== true && !sourceIsGoogleDocs/, "a just-created tab skips the existing-viewer probe");
 	assert.match(backgroundSourceText, /freshBackgroundSource: true, newlyOpenedTab: true \}\)/);
 	assert.match(backgroundSourceText, /if \(blocked \|\| navigation\?\.createdNewTab !== true \|\| !tab\?\.id \|\| tab\.active !== false \|\| tab\.status !== "complete" \|\| !isLikelyPdfResourceUrl\(tab\.url\)\) return null;/, "only a new, loaded, background PDF tab gets the viewer");

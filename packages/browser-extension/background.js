@@ -11649,9 +11649,44 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 // Onhand viewer. The tab's status is polled as well.
 const TAB_COMPLETE_POLL_MS = 200;
 
-async function waitForTabComplete(tabId, timeoutMs = 15000) {
+// Firefox resolves tabs.update before the navigation it started shows on the
+// tab: for a moment the tab still reads "complete" at the address it is
+// leaving. Waiting for "complete" then returned at once. A same-tab
+// navigation reported the old page as loaded, and a PDF moved into Onhand's
+// viewer reported done most of a second before the viewer could answer, so a
+// read sent straight after came back empty. Two options say what the tab was
+// just told to do:
+//   navigatingFrom: the address it had. The tab is loaded once the navigation
+//     has shown on it (its status left "complete", or its address changed)
+//     and finished. One that shows neither in the grace time was not going
+//     anywhere (a download, a refused address).
+//   showing(tab): the tab also has to show what it was sent to.
+const TAB_NAVIGATION_START_GRACE_MS = 3000;
+
+// The navigatingFrom option for a tab that was just sent to url. Only
+// Firefox needs it, and a move within the same document never loads.
+function tabNavigationWait(tab, url) {
+	const from = String(tab?.url || "");
+	if (!IS_FIREFOX || !from || stripUrlHash(from) === stripUrlHash(String(url || ""))) return {};
+	return { navigatingFrom: from };
+}
+
+async function waitForTabComplete(tabId, timeoutMs = 15000, options = {}) {
+	const navigatingFrom = typeof options.navigatingFrom === "string" ? options.navigatingFrom : null;
+	const showing = typeof options.showing === "function" ? options.showing : null;
+	const startedAt = Date.now();
+	let navigationShown = navigatingFrom === null;
+	const loaded = (candidate) => {
+		if (candidate.status !== "complete" || candidate.pendingUrl) {
+			navigationShown = true;
+			return false;
+		}
+		if (showing && !showing(candidate)) return false;
+		if (candidate.url !== navigatingFrom) navigationShown = true;
+		return navigationShown || Date.now() - startedAt >= TAB_NAVIGATION_START_GRACE_MS;
+	};
 	const tab = await chrome.tabs.get(tabId);
-	if (tab.status === "complete" && !tab.pendingUrl) return tab;
+	if (loaded(tab)) return tab;
 
 	return await new Promise((resolve, reject) => {
 		let timeoutId;
@@ -11659,6 +11694,9 @@ async function waitForTabComplete(tabId, timeoutMs = 15000) {
 		const onUpdated = async (updatedTabId, changeInfo, updatedTab) => {
 			if (updatedTabId !== tabId) return;
 			if (changeInfo.status !== "complete") return;
+			// A load finished: the navigation has shown, whatever the address.
+			navigationShown = true;
+			if (showing && !showing(updatedTab)) return;
 			cleanup();
 			resolve(updatedTab);
 		};
@@ -11673,7 +11711,7 @@ async function waitForTabComplete(tabId, timeoutMs = 15000) {
 		pollId = setInterval(async () => {
 			try {
 				const current = await chrome.tabs.get(tabId);
-				if (current.status !== "complete" || current.pendingUrl) return;
+				if (!loaded(current)) return;
 				cleanup();
 				resolve(current);
 			} catch (error) {
@@ -11692,24 +11730,36 @@ async function waitForTabComplete(tabId, timeoutMs = 15000) {
 	});
 }
 
-async function waitForOnhandPdfViewerReady(tabId, timeoutMs = 15000) {
+// The viewer answers over its own runtime port in every browser. The debugger
+// is Chrome's way to a viewer page whose port has not connected; Firefox has
+// none, and asking through it alone sat out the whole timeout there.
+async function readOnhandPdfViewerTabStatus(tabId, pdfUrl = "") {
+	try {
+		return await callOnhandPdfViewerFrameViaRuntimePort(tabId, { command: "status" }, "No Onhand PDF viewer runtime port found", pdfUrl);
+	} catch (portError) {
+		if (!chrome.debugger) throw portError;
+	}
+	return await evaluateInTab(
+		tabId,
+		`(() => {
+			const error = document.querySelector(".onhand-pdf-error")?.textContent || "";
+			return {
+				ready: document.body?.getAttribute("data-onhand-pdf-rendered") === "true",
+				error,
+				statusText: document.querySelector("#onhand-pdf-status")?.textContent || "",
+				pageCountText: document.querySelector("#onhand-pdf-page-count")?.textContent || "",
+			};
+		})()`,
+		{ skipScripting: true },
+	);
+}
+
+async function waitForOnhandPdfViewerReady(tabId, timeoutMs = 15000, pdfUrl = "") {
 	const deadline = Date.now() + timeoutMs;
 	let lastError = null;
 	while (Date.now() < deadline) {
 		try {
-			const status = await evaluateInTab(
-				tabId,
-				`(() => {
-					const error = document.querySelector(".onhand-pdf-error")?.textContent || "";
-					return {
-						ready: document.body?.getAttribute("data-onhand-pdf-rendered") === "true",
-						error,
-						statusText: document.querySelector("#onhand-pdf-status")?.textContent || "",
-						pageCountText: document.querySelector("#onhand-pdf-page-count")?.textContent || "",
-					};
-				})()`,
-				{ skipScripting: true },
-			);
+			const status = await readOnhandPdfViewerTabStatus(tabId, pdfUrl);
 			if (status?.ready) return { ok: true, ...status };
 			if (status?.error) {
 				throw new Error(`Onhand PDF viewer failed to load the PDF: ${status.error}`);
@@ -11825,9 +11875,9 @@ async function safeWaitForInlineOnhandPdfViewerReady(tabId, timeoutMs = 15000, p
 	}
 }
 
-async function safeWaitForOnhandPdfViewerReady(tabId, timeoutMs = 15000) {
+async function safeWaitForOnhandPdfViewerReady(tabId, timeoutMs = 15000, pdfUrl = "") {
 	try {
-		return await waitForOnhandPdfViewerReady(tabId, timeoutMs);
+		return await waitForOnhandPdfViewerReady(tabId, timeoutMs, pdfUrl);
 	} catch (error) {
 		return pdfViewerReadyFailure(error);
 	}
@@ -12001,7 +12051,9 @@ async function navigateBrowser(args = {}) {
 		url: args.url,
 		active: args.active === true ? true : undefined,
 	});
-	const finalTab = waitForLoad ? await waitForTabComplete(updatedTab.id, timeoutMs) : await chrome.tabs.get(updatedTab.id);
+	const finalTab = waitForLoad
+		? await waitForTabComplete(updatedTab.id, timeoutMs, tabNavigationWait(targetTab, args.url))
+		: await chrome.tabs.get(updatedTab.id);
 	return {
 		tab: finalTab,
 		createdNewTab: false,
@@ -12338,6 +12390,11 @@ async function openPdfInOnhandViewer(args = {}) {
 	const waitForLoad = args.waitForLoad !== false;
 	const timeoutMs = clampNumber(args.timeoutMs, 15000, { min: 100, max: 120000 });
 	const sourceTabSnapshot = simplifyTab(sourceTab);
+	// A tab sent to Onhand's viewer is loaded once it shows the viewer for this PDF.
+	const viewerSourceUrl = extractPdfSourceUrlFromViewerLikeUrl(viewerUrl);
+	const viewerTabWait = {
+		showing: (tab) => isOwnExtensionPdfViewerUrl(tab?.url) && extractPdfSourceUrlFromViewerLikeUrl(tab.url) === viewerSourceUrl,
+	};
 	log("PDF viewer initial location", {
 		sourceTab: sourceTabSnapshot,
 		pdfUrl,
@@ -12354,6 +12411,7 @@ async function openPdfInOnhandViewer(args = {}) {
 
 	if (!sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
 		let targetTab;
+		let targetTabWait = {};
 		if (shouldOpenViewerInNewTab) {
 			targetTab = await chrome.tabs.create({
 				url: pdfUrl,
@@ -12367,9 +12425,10 @@ async function openPdfInOnhandViewer(args = {}) {
 				url: pdfUrl,
 				active: args.active === false ? undefined : true,
 			});
+			targetTabWait = tabNavigationWait(sourceTab, pdfUrl);
 		}
 		let stepStartedAt = Date.now();
-		const finalTab = waitForLoad ? await waitForTabComplete(targetTab.id, timeoutMs) : await chrome.tabs.get(targetTab.id);
+		const finalTab = waitForLoad ? await waitForTabComplete(targetTab.id, timeoutMs, targetTabWait) : await chrome.tabs.get(targetTab.id);
 		markStage("tabLoad", stepStartedAt);
 		// A tab opened or navigated for this address (the source tab's own
 		// address was checked above): make sure a PDF arrived before laying the
@@ -12406,9 +12465,9 @@ async function openPdfInOnhandViewer(args = {}) {
 			// can't be laid over it. Open Onhand's viewer in the tab instead.
 			if (!isRestrictedScriptingError(error)) throw error;
 			const viewerTab = await chrome.tabs.update(finalTab.id, { url: viewerUrl });
-			const loadedTab = waitForLoad ? await waitForTabComplete(viewerTab.id, timeoutMs) : await chrome.tabs.get(viewerTab.id);
+			const loadedTab = waitForLoad ? await waitForTabComplete(viewerTab.id, timeoutMs, viewerTabWait) : await chrome.tabs.get(viewerTab.id);
 			const viewerReady =
-				waitForLoad && isOwnExtensionPdfViewerUrl(loadedTab?.url) ? await safeWaitForOnhandPdfViewerReady(loadedTab.id, timeoutMs) : null;
+				waitForLoad && isOwnExtensionPdfViewerUrl(loadedTab?.url) ? await safeWaitForOnhandPdfViewerReady(loadedTab.id, timeoutMs, pdfUrl) : null;
 			return {
 				tab: simplifyTab(loadedTab),
 				sourceTab: sourceTabSnapshot,
@@ -12454,7 +12513,7 @@ async function openPdfInOnhandViewer(args = {}) {
 
 	if (args.forceReload !== true && isOnhandPdfViewerLikeUrl(sourceTab.url) && extractPdfSourceUrlFromViewerLikeUrl(sourceTab.url) === pdfUrl) {
 		const focusedTab = args.active === false ? sourceTab : await focusTab(sourceTab.id);
-		const viewerReady = waitForLoad && isOwnExtensionPdfViewerUrl(focusedTab.url) ? await safeWaitForOnhandPdfViewerReady(focusedTab.id, timeoutMs) : null;
+		const viewerReady = waitForLoad && isOwnExtensionPdfViewerUrl(focusedTab.url) ? await safeWaitForOnhandPdfViewerReady(focusedTab.id, timeoutMs, pdfUrl) : null;
 		const selectionHandoff = await getReuseSelectionHandoffResult(focusedTab.id);
 		return {
 			tab: simplifyTab(focusedTab),
@@ -12492,10 +12551,10 @@ async function openPdfInOnhandViewer(args = {}) {
 		});
 	}
 
-	const finalTab = waitForLoad ? await waitForTabComplete(targetTab.id, timeoutMs) : await chrome.tabs.get(targetTab.id);
+	const finalTab = waitForLoad ? await waitForTabComplete(targetTab.id, timeoutMs, viewerTabWait) : await chrome.tabs.get(targetTab.id);
 	let viewerReady = null;
 	if (waitForLoad && isOwnExtensionPdfViewerUrl(finalTab?.url)) {
-		viewerReady = await safeWaitForOnhandPdfViewerReady(finalTab.id, timeoutMs);
+		viewerReady = await safeWaitForOnhandPdfViewerReady(finalTab.id, timeoutMs, pdfUrl);
 	}
 	const selectionHandoff = await getSelectionHandoffResult(finalTab.id);
 	return {
