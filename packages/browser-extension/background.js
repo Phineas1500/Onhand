@@ -16122,7 +16122,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				diagnosticsEnabled: message.diagnosticsEnabled,
 				advancedRuntimeInspectionEnabled: message.advancedRuntimeInspectionEnabled,
 				experimentalModelLaneClassifier: message.experimentalModelLaneClassifier,
-				codexFastModeEnabled: message.codexFastModeEnabled,
+				codexSpeed: message.codexSpeed,
 				followUpSuggestionsEnabled: message.followUpSuggestionsEnabled,
 			});
 			void updateUninstallUrl().catch(() => {});

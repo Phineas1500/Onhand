@@ -85,8 +85,8 @@ const aiApiKeyInput = document.getElementById("aiApiKey");
 const apiKeyLabelEl = document.getElementById("apiKeyLabel");
 const apiKeyHelpEl = document.getElementById("apiKeyHelp");
 const removeKeyButton = document.getElementById("removeKey");
-const codexFastModeFieldEl = document.getElementById("codexFastModeField");
-const codexFastModeEnabledInput = document.getElementById("codexFastModeEnabled");
+const codexSpeedFieldEl = document.getElementById("codexSpeedField");
+const codexSpeedInput = document.getElementById("codexSpeed");
 const openAiKeyFieldEl = document.getElementById("openAiKeyField");
 const openAiKeyOptionalEl = document.getElementById("openAiKeyOptional");
 const openAiKeyHomeEl = document.getElementById("openAiKeyHome");
@@ -284,10 +284,25 @@ function syncCapabilityStatus() {
 	capabilityStatusEl.textContent = `${meta.name} ${modelId} may not support ${unsupported.join(", ")}. Onhand shows an error if a request needs one.`;
 }
 
+// Ultrafast is offered per model. A model without it shows Standard and Fast,
+// and an Ultrafast choice made on another model drops to Fast.
+function syncCodexSpeedField() {
+	const models = providerModels(CODEX_PROVIDER);
+	const model = models.find((candidate) => candidate.id === selectedModel());
+	// Until the model list has loaded, the saved choice stays as it is.
+	const speeds = !models.length ? ["standard", "fast", "ultrafast"] : Array.isArray(model?.speeds) ? model.speeds : ["standard", "fast"];
+	for (const option of codexSpeedInput.options) {
+		const offered = speeds.includes(option.value);
+		option.hidden = !offered;
+		option.disabled = !offered;
+	}
+	if (!speeds.includes(codexSpeedInput.value)) codexSpeedInput.value = speeds.includes("fast") ? "fast" : "standard";
+}
+
 function syncAuthModeFields() {
 	const mode = authModeInput.value;
 	for (const panel of modePanels) panel.hidden = panel.dataset.modePanel !== mode;
-	codexFastModeFieldEl.hidden = mode !== "oauth";
+	codexSpeedFieldEl.hidden = mode !== "oauth";
 	if (mode === "oauth") {
 		modelFieldEl.hidden = false;
 		const currentModelId = aiModelInput.value.trim();
@@ -314,6 +329,7 @@ function syncAuthModeFields() {
 		modelHelpEl.textContent = "";
 	}
 	modelHelpEl.hidden = !modelHelpEl.textContent;
+	syncCodexSpeedField();
 	syncDiagnosticsFields();
 	syncApiKeyFields();
 	syncCapabilityStatus();
@@ -431,7 +447,9 @@ async function loadForm() {
 	diagnosticsChoice = Boolean(runtimeSettings.diagnosticsEnabled);
 	diagnosticsEnabledInput.checked = diagnosticsChoice;
 	advancedRuntimeInspectionEnabledInput.checked = runtimeSettings.advancedRuntimeInspectionEnabled !== false;
-	codexFastModeEnabledInput.checked = runtimeSettings.codexFastModeEnabled === true;
+	// A choice saved before the three-way setting was a Fast mode checkbox.
+	const savedSpeed = runtimeSettings.codexSpeed || (runtimeSettings.codexFastModeEnabled === true ? "fast" : "standard");
+	codexSpeedInput.value = ["fast", "ultrafast"].includes(savedSpeed) ? savedSpeed : "standard";
 	// Default-on: unset storage renders checked, like the classifier below.
 	followUpSuggestionsEnabledInput.checked = runtimeSettings.followUpSuggestionsEnabled !== false;
 	// Default-on (see DEFAULT_SETTINGS): unset storage must render CHECKED, or
@@ -484,7 +502,7 @@ async function save() {
 		liveResponsesModel: liveResponsesModelInput.value,
 		diagnosticsEnabled: isFreeTierMode() || diagnosticsChoice,
 		advancedRuntimeInspectionEnabled: Boolean(advancedRuntimeInspectionEnabledInput.checked),
-		codexFastModeEnabled: Boolean(codexFastModeEnabledInput.checked),
+		codexSpeed: codexSpeedInput.value,
 		followUpSuggestionsEnabled: Boolean(followUpSuggestionsEnabledInput.checked),
 		experimentalModelLaneClassifier: Boolean(experimentalModelLaneClassifierInput.checked),
 		aiApiKey: aiApiKeys.openai || "",
@@ -579,10 +597,12 @@ modelSelectEl.addEventListener("change", () => {
 	}
 	aiModelInput.value = modelSelectEl.value;
 	aiModelInput.hidden = true;
+	syncCodexSpeedField();
 	syncCapabilityStatus();
 	scheduleSave();
 });
 aiModelInput.addEventListener("input", () => {
+	syncCodexSpeedField();
 	syncCapabilityStatus();
 	scheduleSave(TYPING_SAVE_DELAY_MS);
 });
@@ -612,7 +632,7 @@ diagnosticsEnabledInput.addEventListener("change", () => {
 	diagnosticsChoice = diagnosticsEnabledInput.checked;
 	scheduleSave();
 });
-for (const input of [liveResponsesModelInput, liveInterruptionInput, codexFastModeEnabledInput, followUpSuggestionsEnabledInput, advancedRuntimeInspectionEnabledInput, experimentalModelLaneClassifierInput]) {
+for (const input of [liveResponsesModelInput, liveInterruptionInput, codexSpeedInput, followUpSuggestionsEnabledInput, advancedRuntimeInspectionEnabledInput, experimentalModelLaneClassifierInput]) {
 	input.addEventListener("change", () => scheduleSave());
 }
 removeKeyButton.addEventListener("click", () => removeSelectedKey().catch(reportError));

@@ -120,10 +120,11 @@ interface RuntimeSettings {
 	// Set once stored voice settings have adopted the Onhand agent as Live's
 	// default backend (October 2026); afterwards stored choices are authoritative.
 	voiceDefaultsMigrated: boolean;
-	// Codex fast mode: service_tier "priority" on the Codex responses API —
-	// the same model on faster inference. Off by default because the plan's
-	// usage is consumed faster (2.5x on gpt-5.5). Ignored by other providers.
-	codexFastModeEnabled: boolean;
+	// Speed on ChatGPT sign-in: the same model on faster inference ("fast" is
+	// service_tier "priority", "ultrafast" is service_tier "ultrafast" on the
+	// Codex responses API). Standard by default because the faster tiers use
+	// the plan's limits faster. Ignored by other providers.
+	codexSpeed: CodexSpeed;
 	// After each answer, one short model call suggests the reader's likely next
 	// question as composer ghost text. On by default; a stored false opts out.
 	followUpSuggestionsEnabled: boolean;
@@ -447,6 +448,24 @@ const RETIRED_OPENAI_CODEX_MODELS = new Set(["gpt-5.5", "gpt-5.3-codex-spark"]);
 // transport used by the catalog-backed models above/below them.
 const OPENAI_CODEX_ADDITIONAL_MODELS = [
 	{
+		// Released 2026-11-17, after pi-ai 1.4's catalog. Same shape as the
+		// catalog's GPT-6.1 Sol: it cannot turn reasoning off, and Codex gives
+		// ChatGPT accounts a 500K window.
+		id: "gpt-6.2-sol",
+		name: "GPT-6.2 Sol",
+		api: "openai-codex-responses",
+		provider: OPENAI_CODEX_PROVIDER,
+		baseUrl: "https://chatgpt.com/backend-api",
+		reasoning: true,
+		thinkingLevelMap: { off: null, minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
+		input: ["text", "image"],
+		cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5, tiers: [{ inputTokensAbove: 272000, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }] },
+		contextWindow: 500000,
+		maxTokens: 128000,
+		compat: { supportsOpenAIGrammarTools: true, supportsAdditionalTools: true, supportsToolSearch: true, supportsMidConvoSystemMessages: true },
+		inputLimits: { images: { resize: { maxWidth: 2000, maxHeight: 2000, maxBytes: 4718592, jpegQuality: 80 } } },
+	},
+	{
 		id: "gpt-5.6-sol",
 		name: "GPT-5.6 Sol",
 		api: "openai-codex-responses",
@@ -486,6 +505,28 @@ const OPENAI_CODEX_ADDITIONAL_MODELS = [
 		maxTokens: 128000,
 	},
 ] as const;
+// Speed tiers Codex offers on ChatGPT sign-in. Every model in the picker has
+// Fast; Ultrafast is listed per model (and a ChatGPT plan has to include it).
+type CodexSpeed = "standard" | "fast" | "ultrafast";
+const OPENAI_CODEX_ULTRAFAST_MODELS = new Set(["gpt-6.2-sol"]);
+
+function codexSpeedsForModel(modelId: string): CodexSpeed[] {
+	return OPENAI_CODEX_ULTRAFAST_MODELS.has(modelId) ? ["standard", "fast", "ultrafast"] : ["standard", "fast"];
+}
+
+// A stored choice from before the three-way setting was a boolean fast mode.
+function normalizeCodexSpeed(value: unknown, legacyFastModeEnabled: unknown = false): CodexSpeed {
+	if (value === "standard" || value === "fast" || value === "ultrafast") return value;
+	return legacyFastModeEnabled === true ? "fast" : "standard";
+}
+
+// The service_tier one Codex request carries. Ultrafast falls back to Fast on a
+// model without it, which covers the internal calls that run on GPT-6 Luna
+// while the reader's model is an Ultrafast one.
+function codexServiceTier(modelId: string, speed: unknown): "priority" | "ultrafast" | undefined {
+	if (speed === "ultrafast") return OPENAI_CODEX_ULTRAFAST_MODELS.has(modelId) ? "ultrafast" : "priority";
+	return speed === "fast" ? "priority" : undefined;
+}
 const ANTHROPIC_API_PROVIDER = "anthropic";
 const ANTHROPIC_API_MODEL = "claude-opus-5-5";
 // Anthropic retires Claude Sonnet 4.5 on 2026-11-30. It was the default, and
@@ -770,7 +811,7 @@ const DEFAULT_SETTINGS: RuntimeSettings = {
 	experimentalModelLaneClassifier: true,
 	modelLaneClassifierDefaultMigrated: false,
 	voiceDefaultsMigrated: false,
-	codexFastModeEnabled: false,
+	codexSpeed: "standard",
 	followUpSuggestionsEnabled: true,
 };
 
@@ -3133,6 +3174,7 @@ function getProviderModelOptions(providerId: string) {
 				tools: ["openai-responses", "openai-completions", "openai-codex-responses", "anthropic-messages", "google-generative-ai"].includes(model.api),
 				structuredOutput: ["openai-responses", "openai-codex-responses", "anthropic-messages", "google-generative-ai"].includes(model.api),
 				realtime: providerId === OPENAI_API_PROVIDER && /realtime/i.test(model.id),
+				...(providerId === OPENAI_CODEX_PROVIDER ? { speeds: codexSpeedsForModel(model.id) } : {}),
 			}))
 			.slice(0, 80);
 	} catch {
@@ -3196,7 +3238,7 @@ function buildPublicSettings(settings: RuntimeSettings) {
 		diagnosticsEnabled: settings.diagnosticsEnabled,
 		advancedRuntimeInspectionEnabled: settings.advancedRuntimeInspectionEnabled,
 		experimentalModelLaneClassifier: settings.experimentalModelLaneClassifier,
-		codexFastModeEnabled: settings.codexFastModeEnabled,
+		codexSpeed: normalizeCodexSpeed(settings.codexSpeed),
 		followUpSuggestionsEnabled: settings.followUpSuggestionsEnabled !== false,
 		aiProvider: settings.aiProvider,
 		aiModel: settings.aiModel,
@@ -12205,6 +12247,8 @@ export const __browserRuntimeTest = {
 	humanizeProviderErrorMessageForTest: humanizeProviderErrorMessage,
 	describeRejectedApiKeyForTest: describeRejectedApiKey,
 	streamOnhandProviderForTest: streamOnhandProvider,
+	codexServiceTierForTest: codexServiceTier,
+	normalizeCodexSpeedForTest: normalizeCodexSpeed,
 	buildRepeatedToolFailureAnswerNowGuardResultForTest: buildRepeatedToolFailureAnswerNowGuardResult,
 	ensurePdfAbsenceReviewScopeForTest: ensurePdfAbsenceReviewScope,
 	setLearnerStateModeForTest: setLearnerStateMode,
@@ -12676,7 +12720,7 @@ function streamOnhandFast(model: any, context: any, options: any = {}) {
 }
 
 function streamOnhandProvider(model: any, context: any, options: any = {}) {
-	const { onhandReasoningProfile, onhandTelemetry, onhandCodexFastMode, ...streamOptions } = options || {};
+	const { onhandReasoningProfile, onhandTelemetry, onhandCodexSpeed, ...streamOptions } = options || {};
 	const effectiveModel =
 		model?.provider === ONHAND_FREE_PROVIDER && contextContainsImage(context)
 			? {
@@ -12697,14 +12741,17 @@ function streamOnhandProvider(model: any, context: any, options: any = {}) {
 		maxTokens: reasoningProfile?.maxTokens || ONHAND_MAX_OUTPUT_TOKENS,
 	};
 	if (effectiveModel?.api === "openai-codex-responses") {
+		// Fast and Ultrafast: the same model on faster inference. They use the
+		// plan's limits faster, so they are opt-in. pi-ai types the tier with
+		// the OpenAI SDK's list, which has no "ultrafast" yet; it sends the
+		// value as given.
+		const serviceTier = codexServiceTier(String(effectiveModel.id || ""), onhandCodexSpeed);
 		return streamOpenAICodexResponses(effectiveModel, context, {
 			...baseOptions,
 			reasoningEffort: reasoningEffortForModel(effectiveModel, reasoningProfile?.reasoningEffort || "none"),
 			reasoningSummary: "auto",
 			textVerbosity: reasoningProfile?.textVerbosity || "low",
-			// Codex fast mode: same model on priority inference. The plan's
-			// usage is consumed faster (2.5x on gpt-5.5), so it is opt-in.
-			...(onhandCodexFastMode ? { serviceTier: "priority" } : {}),
+			...(serviceTier ? { serviceTier: serviceTier as any } : {}),
 		});
 	}
 	if (effectiveModel?.api === "openai-responses" && effectiveModel?.reasoning) {
@@ -14040,7 +14087,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					: DEFAULT_SETTINGS.experimentalModelLaneClassifier,
 				modelLaneClassifierDefaultMigrated: true,
 				voiceDefaultsMigrated: true,
-				codexFastModeEnabled: rawSettings.codexFastModeEnabled === true,
+				codexSpeed: normalizeCodexSpeed(rawSettings.codexSpeed, rawSettings.codexFastModeEnabled),
 				followUpSuggestionsEnabled: rawSettings.followUpSuggestionsEnabled !== false,
 			};
 			// Retired with the Realtime engine (October 2026); Live is the only engine.
@@ -16411,7 +16458,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			const stream = streamOnhandFast(model, buildModelIntentClassifierContext(prompt, page), {
 				apiKey,
 				signal,
-				onhandCodexFastMode: Boolean((store.settings as RuntimeSettings).codexFastModeEnabled),
+				onhandCodexSpeed: (store.settings as RuntimeSettings).codexSpeed,
 				onhandReasoningProfile: {
 					maxTokens: MODEL_INTENT_CLASSIFIER_MAX_TOKENS,
 					reasoningEffort: "none",
@@ -18307,7 +18354,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				// now an authoritative opt-out, not a legacy artifact.
 				modelLaneClassifierDefaultMigrated: true,
 				voiceDefaultsMigrated: true,
-				codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store.settings.codexFastModeEnabled) === true,
+				codexSpeed: normalizeCodexSpeed(nextPartial.codexSpeed ?? store.settings.codexSpeed),
 				followUpSuggestionsEnabled: (nextPartial.followUpSuggestionsEnabled ?? store.settings.followUpSuggestionsEnabled) !== false,
 			};
 			delete (store.settings as any).voiceEngine;
@@ -19043,7 +19090,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 									sessionId: session.id,
 								},
 								onhandReasoningProfile: reasoningProfile,
-								onhandCodexFastMode: Boolean(requestSettings.codexFastModeEnabled),
+								onhandCodexSpeed: requestSettings.codexSpeed,
 							});
 						},
 						toolExecution: "parallel",

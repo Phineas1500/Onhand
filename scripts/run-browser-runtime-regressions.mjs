@@ -8,6 +8,7 @@ import { runWelcomeOpenRegressions } from "./lib/welcome-open-regressions.mjs";
 import { runFeatureUsageRegressions } from "./lib/feature-usage-regressions.mjs";
 import { runContextMenuRegressions } from "./lib/context-menu-regressions.mjs";
 import { runSessionNotesRegressions } from "./lib/session-notes-regressions.mjs";
+import { runCodexSpeedRegressions } from "./lib/codex-speed-regressions.mjs";
 import { runNoteTitleRegressions } from "./lib/note-title-regressions.mjs";
 import { runHighlightMissRegressions } from "./lib/highlight-miss-regressions.mjs";
 import { runHighlightRefusalRegressions } from "./lib/highlight-refusal-regressions.mjs";
@@ -1104,7 +1105,7 @@ async function assertProviderApiKeyStorageAndRouting() {
 	assert.equal(getProviderModelOptions("onhand-free")[0].id, "gpt-6-luna", "free tier should pin its model");
 	assert.deepEqual(getProviderModelOptions("onhand-free")[0].input, ["text", "image"], "free tier must preserve image payloads for server-side visual routing");
 	const codexModelIds = getProviderModelOptions("openai-codex").map((model) => model.id);
-	assert.deepEqual(codexModelIds.slice(0, 3), ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"], "Codex should offer all GPT-5.6 tiers");
+	assert.deepEqual(codexModelIds.slice(0, 4), ["gpt-6.2-sol", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"], "Codex should offer GPT-6.2 Sol and all GPT-5.6 tiers");
 	assert.equal(buildOpenAICodexFallbackModel("gpt-5.6-sol")?.api, "openai-codex-responses");
 	assert.equal(buildOpenAICodexFallbackModel("gpt-5.6")?.id, "gpt-5.6", "the GPT-5.6 alias should resolve to the Sol transport shape");
 	assert.equal(buildOpenAICodexFallbackModel("gpt-5.5"), null, "catalog-backed Codex models should not use the fallback builder");
@@ -13608,6 +13609,7 @@ async function main() {
 	await assertProviderApiKeyStorageAndRouting();
 	await assertIntentClassifierSendsItsInstructions();
 	await assertClaudeRequestsUseLowEffortThinking();
+	await runCodexSpeedRegressions({ installChromeStorageStub, createReplayHost });
 	await assertRepeatedToolFailuresAnswerNow();
 	await assertOpenRouterRequestsIdentifyOnhand();
 	await assertDecisionsIntentClassifier();

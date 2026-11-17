@@ -87892,6 +87892,24 @@ var OPENAI_CODEX_MODEL = "gpt-6-luna";
 var RETIRED_OPENAI_CODEX_MODELS = /* @__PURE__ */ new Set(["gpt-5.5", "gpt-5.3-codex-spark"]);
 var OPENAI_CODEX_ADDITIONAL_MODELS = [
   {
+    // Released 2026-11-17, after pi-ai 1.4's catalog. Same shape as the
+    // catalog's GPT-6.1 Sol: it cannot turn reasoning off, and Codex gives
+    // ChatGPT accounts a 500K window.
+    id: "gpt-6.2-sol",
+    name: "GPT-6.2 Sol",
+    api: "openai-codex-responses",
+    provider: OPENAI_CODEX_PROVIDER,
+    baseUrl: "https://chatgpt.com/backend-api",
+    reasoning: true,
+    thinkingLevelMap: { off: null, minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
+    input: ["text", "image"],
+    cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5, tiers: [{ inputTokensAbove: 272e3, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }] },
+    contextWindow: 5e5,
+    maxTokens: 128e3,
+    compat: { supportsOpenAIGrammarTools: true, supportsAdditionalTools: true, supportsToolSearch: true, supportsMidConvoSystemMessages: true },
+    inputLimits: { images: { resize: { maxWidth: 2e3, maxHeight: 2e3, maxBytes: 4718592, jpegQuality: 80 } } }
+  },
+  {
     id: "gpt-5.6-sol",
     name: "GPT-5.6 Sol",
     api: "openai-codex-responses",
@@ -87931,6 +87949,18 @@ var OPENAI_CODEX_ADDITIONAL_MODELS = [
     maxTokens: 128e3
   }
 ];
+var OPENAI_CODEX_ULTRAFAST_MODELS = /* @__PURE__ */ new Set(["gpt-6.2-sol"]);
+function codexSpeedsForModel(modelId) {
+  return OPENAI_CODEX_ULTRAFAST_MODELS.has(modelId) ? ["standard", "fast", "ultrafast"] : ["standard", "fast"];
+}
+function normalizeCodexSpeed(value, legacyFastModeEnabled = false) {
+  if (value === "standard" || value === "fast" || value === "ultrafast") return value;
+  return legacyFastModeEnabled === true ? "fast" : "standard";
+}
+function codexServiceTier(modelId, speed) {
+  if (speed === "ultrafast") return OPENAI_CODEX_ULTRAFAST_MODELS.has(modelId) ? "ultrafast" : "priority";
+  return speed === "fast" ? "priority" : void 0;
+}
 var ANTHROPIC_API_PROVIDER = "anthropic";
 var ANTHROPIC_API_MODEL = "claude-opus-5-5";
 var RETIRED_ANTHROPIC_API_MODELS = /* @__PURE__ */ new Set(["claude-sonnet-4-5-20250929", "claude-sonnet-4-5"]);
@@ -88163,7 +88193,7 @@ var DEFAULT_SETTINGS = {
   experimentalModelLaneClassifier: true,
   modelLaneClassifierDefaultMigrated: false,
   voiceDefaultsMigrated: false,
-  codexFastModeEnabled: false,
+  codexSpeed: "standard",
   followUpSuggestionsEnabled: true
 };
 var ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
@@ -90092,7 +90122,8 @@ function getProviderModelOptions(providerId) {
       input: Array.isArray(model2.input) ? model2.input : [],
       tools: ["openai-responses", "openai-completions", "openai-codex-responses", "anthropic-messages", "google-generative-ai"].includes(model2.api),
       structuredOutput: ["openai-responses", "openai-codex-responses", "anthropic-messages", "google-generative-ai"].includes(model2.api),
-      realtime: providerId === OPENAI_API_PROVIDER && /realtime/i.test(model2.id)
+      realtime: providerId === OPENAI_API_PROVIDER && /realtime/i.test(model2.id),
+      ...providerId === OPENAI_CODEX_PROVIDER ? { speeds: codexSpeedsForModel(model2.id) } : {}
     })).slice(0, 80);
   } catch {
     return [];
@@ -90149,7 +90180,7 @@ function buildPublicSettings(settings2) {
     diagnosticsEnabled: settings2.diagnosticsEnabled,
     advancedRuntimeInspectionEnabled: settings2.advancedRuntimeInspectionEnabled,
     experimentalModelLaneClassifier: settings2.experimentalModelLaneClassifier,
-    codexFastModeEnabled: settings2.codexFastModeEnabled,
+    codexSpeed: normalizeCodexSpeed(settings2.codexSpeed),
     followUpSuggestionsEnabled: settings2.followUpSuggestionsEnabled !== false,
     aiProvider: settings2.aiProvider,
     aiModel: settings2.aiModel,
@@ -96415,6 +96446,8 @@ var __browserRuntimeTest = {
   humanizeProviderErrorMessageForTest: humanizeProviderErrorMessage,
   describeRejectedApiKeyForTest: describeRejectedApiKey,
   streamOnhandProviderForTest: streamOnhandProvider,
+  codexServiceTierForTest: codexServiceTier,
+  normalizeCodexSpeedForTest: normalizeCodexSpeed,
   buildRepeatedToolFailureAnswerNowGuardResultForTest: buildRepeatedToolFailureAnswerNowGuardResult,
   ensurePdfAbsenceReviewScopeForTest: ensurePdfAbsenceReviewScope,
   setLearnerStateModeForTest: setLearnerStateMode,
@@ -96853,7 +96886,7 @@ function streamOnhandFast(model2, context, options = {}) {
   return withModelStreamIdleTimeout(model2, options, (streamOptions) => streamOnhandProvider(model2, transcriptContext, streamOptions));
 }
 function streamOnhandProvider(model2, context, options = {}) {
-  const { onhandReasoningProfile, onhandTelemetry, onhandCodexFastMode, ...streamOptions } = options || {};
+  const { onhandReasoningProfile, onhandTelemetry, onhandCodexSpeed, ...streamOptions } = options || {};
   const effectiveModel = model2?.provider === ONHAND_FREE_PROVIDER && contextContainsImage(context) ? {
     ...model2,
     input: Array.from(/* @__PURE__ */ new Set([...Array.isArray(model2.input) ? model2.input : ["text"], "image"])),
@@ -96871,14 +96904,13 @@ function streamOnhandProvider(model2, context, options = {}) {
     maxTokens: reasoningProfile?.maxTokens || ONHAND_MAX_OUTPUT_TOKENS
   };
   if (effectiveModel?.api === "openai-codex-responses") {
+    const serviceTier = codexServiceTier(String(effectiveModel.id || ""), onhandCodexSpeed);
     return streamOpenAICodexResponses(effectiveModel, context, {
       ...baseOptions,
       reasoningEffort: reasoningEffortForModel(effectiveModel, reasoningProfile?.reasoningEffort || "none"),
       reasoningSummary: "auto",
       textVerbosity: reasoningProfile?.textVerbosity || "low",
-      // Codex fast mode: same model on priority inference. The plan's
-      // usage is consumed faster (2.5x on gpt-5.5), so it is opt-in.
-      ...onhandCodexFastMode ? { serviceTier: "priority" } : {}
+      ...serviceTier ? { serviceTier } : {}
     });
   }
   if (effectiveModel?.api === "openai-responses" && effectiveModel?.reasoning) {
@@ -98081,7 +98113,7 @@ function createOnhandBrowserRuntime(host) {
         experimentalModelLaneClassifier: classifierPreviouslyMigrated ? rawSettings.experimentalModelLaneClassifier !== false : DEFAULT_SETTINGS.experimentalModelLaneClassifier,
         modelLaneClassifierDefaultMigrated: true,
         voiceDefaultsMigrated: true,
-        codexFastModeEnabled: rawSettings.codexFastModeEnabled === true,
+        codexSpeed: normalizeCodexSpeed(rawSettings.codexSpeed, rawSettings.codexFastModeEnabled),
         followUpSuggestionsEnabled: rawSettings.followUpSuggestionsEnabled !== false
       };
       delete settings2.voiceEngine;
@@ -100168,7 +100200,7 @@ function createOnhandBrowserRuntime(host) {
       const stream11 = streamOnhandFast(model2, buildModelIntentClassifierContext(prompt, page), {
         apiKey,
         signal,
-        onhandCodexFastMode: Boolean(store2.settings.codexFastModeEnabled),
+        onhandCodexSpeed: store2.settings.codexSpeed,
         onhandReasoningProfile: {
           maxTokens: MODEL_INTENT_CLASSIFIER_MAX_TOKENS,
           reasoningEffort: "none",
@@ -101850,7 +101882,7 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
         // now an authoritative opt-out, not a legacy artifact.
         modelLaneClassifierDefaultMigrated: true,
         voiceDefaultsMigrated: true,
-        codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store2.settings.codexFastModeEnabled) === true,
+        codexSpeed: normalizeCodexSpeed(nextPartial.codexSpeed ?? store2.settings.codexSpeed),
         followUpSuggestionsEnabled: (nextPartial.followUpSuggestionsEnabled ?? store2.settings.followUpSuggestionsEnabled) !== false
       };
       delete store2.settings.voiceEngine;
@@ -102505,7 +102537,7 @@ Mark and answer from this text. Call browser_extract_content again only to conti
                   sessionId: session.id
                 },
                 onhandReasoningProfile: reasoningProfile,
-                onhandCodexFastMode: Boolean(requestSettings.codexFastModeEnabled)
+                onhandCodexSpeed: requestSettings.codexSpeed
               });
             },
             toolExecution: "parallel"

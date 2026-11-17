@@ -510,12 +510,14 @@
           <p id="capabilityStatus" class="warn" hidden></p>
         </div>
 
-        <div id="codexFastModeField" class="toggle-field" hidden>
-          <label class="toggle-row" for="codexFastModeEnabled">
-            <input id="codexFastModeEnabled" type="checkbox" />
-            <span>Fast mode</span>
-          </label>
-          <p class="help">Faster replies at the same quality, but uses your plan's limits about 2.5&times; faster.</p>
+        <div id="codexSpeedField" class="field" hidden>
+          <label for="codexSpeed">Speed</label>
+          <select id="codexSpeed">
+            <option value="standard">Standard</option>
+            <option value="fast">Fast</option>
+            <option value="ultrafast">Ultrafast</option>
+          </select>
+          <p class="help">Fast and Ultrafast reply sooner at the same quality and use your plan's limits faster. Ultrafast shows for models that offer it, and your ChatGPT plan has to include it.</p>
         </div>
 
         <div id="openAiKeyHome"></div>
