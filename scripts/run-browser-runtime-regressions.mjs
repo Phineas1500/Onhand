@@ -8,6 +8,7 @@ import { runWelcomeOpenRegressions } from "./lib/welcome-open-regressions.mjs";
 import { runFeatureUsageRegressions } from "./lib/feature-usage-regressions.mjs";
 import { runContextMenuRegressions } from "./lib/context-menu-regressions.mjs";
 import { runSessionNotesRegressions } from "./lib/session-notes-regressions.mjs";
+import { runNoteTitleRegressions } from "./lib/note-title-regressions.mjs";
 import { runHighlightMissRegressions } from "./lib/highlight-miss-regressions.mjs";
 import { runHighlightRefusalRegressions } from "./lib/highlight-refusal-regressions.mjs";
 import assert from "node:assert/strict";
@@ -13593,6 +13594,7 @@ async function main() {
 	await runFeatureUsageRegressions({ installChromeStorageStub, createReplayHost });
 	await runContextMenuRegressions();
 	await runSessionNotesRegressions({ installChromeStorageStub });
+	await runNoteTitleRegressions({ installChromeStorageStub });
 	await runHighlightMissRegressions({ installChromeStorageStub });
 	await runHighlightRefusalRegressions({ installChromeStorageStub });
 	await assertPreparationCanBeStoppedWithoutLateContinuation();

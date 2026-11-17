@@ -296,6 +296,8 @@ interface PageAction {
 	label: string;
 	detail: string;
 	citationText?: string;
+	// A note's own title (the line above it on the page), when it has one.
+	noteLabel?: string;
 	pdfAnchor?: any;
 	anchor?: any;
 }
@@ -804,7 +806,7 @@ Default answer mode:
 - For follow-up questions that refer to an already-highlighted idea, reuse the existing session source when it supports the answer: call browser_scroll_to_annotation on that anchor once before answering — the scroll shows which mark backs the answer and counts as the turn's source marker. Do not try to highlight a paraphrase of your own explanation; browser_highlight_text text must be copied from visible/readable page text.
 - Grounding budget: marks follow the points your answer states, not the shape of the question. A one-point answer anchors on one strong highlight plus a short answer; if the answer goes on to explain with further page points (a cause, a mechanism, a consequence, a qualification), each of those gets its own highlight — or leave it out of the answer. If the user asks for annotations, evidence location, learning/review source markers, source-navigation work, or a page-level teaching/review summary, use one strong highlight and at most one short note for a simple claim. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points. For broad page teaching/review, highlight the central concepts — ${MARK_POLICY.teachBudgetPhrase}. ${MARK_POLICY.noHeadingMarkers} Prefer definitions, mechanisms, or conclusions over motivation-only contrasts unless a contrast is the whole answer. ${MARK_POLICY.perMarkNotes} If you do not have successful highlights for later sections, keep the chat answer scoped to the highlighted source instead of writing a detached whole-page lecture. Roadmap/list/navigation questions are not simple if the answer names multiple steps or items, but notes should still be sparse.
 - Quick visual questions such as "what does this figure show?", "what is this diagram?", or "try here" should usually be sidebar-only after capturing the visible region or PDF page image. Do not automatically add a note for a quick visual explanation. If a durable source marker is useful, prefer a caption/supporting-text highlight; add a note only when it adds future replay value beyond a label. This does not limit notes for learning, review, evidence-location, source-navigation, comparison, or deeper conceptual workflows.
-- Add a short interpretive note (${MARK_POLICY.noteShapePhrase}) only on highlights that carry explanatory weight: name the role of the passage or explain a hard step. Do not add notes that merely paraphrase the highlight; most confirmatory source highlights should stand without a note.
+- Add a short interpretive note (${MARK_POLICY.noteShapePhrase}) only on highlights that carry explanatory weight: name the role of the passage or explain a hard step. Do not add notes that merely paraphrase the highlight; most confirmatory source highlights should stand without a note. ${MARK_POLICY.noteTitles}
 - Only successful highlight/note tool results count as source markers. If a highlight attempt fails, retry once with a smaller exact visible span, then omit/qualify that claim in chat.
 - For multi-part, comparative, "show evidence", or confused follow-up questions, create a source highlight for each distinct key point you actually explain, but do not add extra highlights just to increase source count. ${MARK_POLICY.comparisonMarks} Do not highlight full algorithms or every sub-step unless the user asks for that level of detail. Keep each note and chat paragraph short. Stop once the answer is supported.
 - For roadmap, list, process, derivation, proof, or navigation questions, treat the prompt as an enumerable coverage task: every required step, item, or top-level peer you name in chat needs its own source highlight unless one highlighted list/table/span literally contains all named items. Mark sibling/top-level items first; do not spend multiple markers on child/subtopic items under one parent while other required top-level items have no marker. Once a parent/top-level item is marked, move to the next sibling item; do not mark child headings, examples, usage patterns, or subfeatures under that same item unless the user specifically asks for that item's internal breakdown. Do not rely on a heading-only highlight if the answer depends on items beneath it. Highlight the sentence, list item, formula label, or linked item that actually supports the claimed path. Use notes sparingly: add them only for the few items where an orienting explanation matters, not for every roadmap item. When the question asks for an overview of several named things, first identify the top-level peer items and highlight each item's own defining sentence or term — do not drill into one item's sub-sections while its sibling items go unmarked. Never include section numbers, list numbers, or "5.1."-style prefixes in browser_highlight_text; copy only the wording, because pages often render the number in a separate element so the prefixed text will not match. On comment threads and forums, never include usernames, timestamps, or navigation chrome ("2 minutes ago", "| parent | next", "reply") in highlight text; copy only the comment's own sentences, because that chrome renders in separate elements and drags the highlight across them. Always attempt to anchor a roadmap or overview on the page rather than answering with chat-only prose. If a heading-only or too-weak highlight is blocked for a required item, retry with that item's own explanatory sentence or the list item beneath its heading — the description, not the bare title — before giving up (the items you did anchor prove the descriptions are markable). If the highlight still genuinely fails, keep the item in the answer and move on; never silently drop the item or fabricate support, but do not surface a 'marker blocked' or 'could not place marker' note to the user — internal marker mechanics are not user-facing.
@@ -1011,6 +1013,7 @@ const HIGHLIGHT_TEXT_SCHEMA = Type.Object({
 	...TAB_MATCH_SCHEMA,
 	text: Type.String({ description: "Exact visible or PDF-reader text to highlight on the page" }),
 	note: Type.Optional(Type.String({ description: `Optional short interpretive margin note to attach to this highlight as soon as it lands (${MARK_POLICY.noteShapePhrase}); same rules as browser_show_note. Use it instead of a separate browser_show_note call for a highlight you are placing now.` })),
+	noteTitle: Type.Optional(Type.String({ description: `Title shown above the note: ${MARK_POLICY.noteTitlePhrase}, not a generic word such as "Note" or "Key point". Set it whenever note is set.` })),
 	occurrence: Type.Optional(Type.Number({ description: "1-based occurrence of the match to highlight" })),
 	clearExisting: Type.Optional(Type.Boolean({ description: "Clear existing Onhand highlights first. Defaults to false so follow-up source highlights accumulate." })),
 	scrollIntoView: Type.Optional(Type.Boolean({ description: "Scroll the highlighted match into view. Always on for turn highlights; false is not honored." })),
@@ -1042,7 +1045,7 @@ const SHOW_NOTE_SCHEMA = Type.Object({
 	...TAB_MATCH_SCHEMA,
 	annotationId: Type.String({ description: "Annotation ID returned by browser_highlight_text" }),
 	note: Type.String({ description: `A short interpretive marginal note (${MARK_POLICY.noteShapePhrase}) shown near the highlighted content. Name the passage's role or explain the hard step; do not paraphrase the highlight. The note carries the explanation for its mark.` }),
-	label: Type.Optional(Type.String({ description: "Optional short label shown above the note" })),
+	label: Type.Optional(Type.String({ description: `Title shown above the note: ${MARK_POLICY.noteTitlePhrase}, not a generic word such as "Note" or "Key point". Give every note one.` })),
 	scrollIntoView: Type.Optional(Type.Boolean({ description: "Keep the highlighted content in view when showing the note. Always on for turn notes; false is not honored." })),
 });
 
@@ -2189,6 +2192,67 @@ const ON_PAGE_NOTE_MAX_CHARS = 280;
 // Margin notes must not defer to the sidebar ("the sidebar has the details");
 // such trailing sentences are filler in the page margin and get dropped.
 const ON_PAGE_NOTE_DEFERRAL_PATTERN = /\b(?:sidebar|chat (?:answer|reply)|full (?:answer|explanation)|see (?:above|below|the answer)|answer (?:above|below))\b/i;
+
+// The line above a note. A title says in a few words what the note is about,
+// so a reader can tell the notes on a page apart. Whatever is not a title
+// (nothing, a stand-in word, a whole sentence) is dropped, and the note keeps
+// the plain "Onhand" header the page toolkit draws by default.
+const ON_PAGE_NOTE_DEFAULT_LABEL = "Onhand";
+const ON_PAGE_NOTE_TITLE_MAX_CHARS = 40;
+const ON_PAGE_NOTE_TITLE_MAX_WORDS = 6;
+const ON_PAGE_NOTE_STAND_IN_TITLE_PATTERN = /^(?:onhand(?:\s+notes?)?|notes?|title|untitled|n\/a|none)$/i;
+
+function onPageNoteTitleFits(title: string) {
+	return title.length >= 2 && title.length <= ON_PAGE_NOTE_TITLE_MAX_CHARS && title.split(/\s+/).length <= ON_PAGE_NOTE_TITLE_MAX_WORDS;
+}
+
+function compactOnPageNoteTitle(value: unknown) {
+	// Titles arrive as plain text; drop Markdown and quoting a model wraps
+	// around them, and the punctuation a heading does not end with.
+	const clean = (text: string) =>
+		text
+			.replace(/\*\*|`/g, "")
+			.replace(/^[\s#>"'“”‘’«»*•·–—-]+/, "")
+			.replace(/[\s"'“”‘’«»*.:;,–—-]+$/, "");
+	const title = clean(compactActionText(value));
+	if (!title || ON_PAGE_NOTE_STAND_IN_TITLE_PATTERN.test(title)) return "";
+	if (onPageNoteTitleFits(title)) return title;
+	// Too long for a heading: keep a leading phrase when the text has one
+	// ("Chain rule: outer times inner"), and no title otherwise — a sentence
+	// cut off mid-way reads worse than the plain header.
+	const head = clean(title.split(/\s*(?:[:;,(]|\s[–—-]\s)/)[0] || "");
+	return head.length >= 3 && onPageNoteTitleFits(head) && !ON_PAGE_NOTE_STAND_IN_TITLE_PATTERN.test(head) ? head : "";
+}
+
+// The title to keep with a saved note: the plain default header is not one.
+function storedOnPageNoteTitle(value: unknown) {
+	const title = compactActionText(value);
+	return title && title !== ON_PAGE_NOTE_DEFAULT_LABEL ? title : "";
+}
+
+// A note that opens by repeating its own title ("Chain rule: multiply the
+// outer..." under the title "Chain rule") would say it twice in the card.
+function stripOnPageNoteTitlePrefix(noteText: string, title: string) {
+	const text = compactActionText(noteText);
+	if (!title) return text;
+	const opening = text.replace(/^(?:\*\*|__)/, "");
+	if (!opening.toLowerCase().startsWith(title.toLowerCase())) return text;
+	const afterTitle = opening.slice(title.length).match(/^(?:\*\*|__)?\s*(?:[:：]|\s[–—-])(?:\*\*|__)?\s+(.*)$/s);
+	const rest = afterTitle ? afterTitle[1].trim() : "";
+	if (rest.length < 12) return text;
+	return `${rest.charAt(0).toUpperCase()}${rest.slice(1)}`;
+}
+
+// What a note call asks the page to draw: the note text within its budget
+// and, when the call names one, the title above it.
+function onPageNoteParams(params: Record<string, any> | null | undefined) {
+	const { label: requestedLabel, noteTitle: requestedNoteTitle, ...noteParams } = params || {};
+	const rawNote = noteParams.note || noteParams.text || "";
+	// A call with only a label has always shown that label as the note.
+	const title = rawNote ? compactOnPageNoteTitle(requestedLabel || requestedNoteTitle) : "";
+	const note = compactOnPageNoteText(stripOnPageNoteTitlePrefix(rawNote || requestedLabel || "", title));
+	return { ...noteParams, note, ...(title ? { label: title } : {}) };
+}
 
 function compactOnPageNoteText(value: unknown, maxChars = ON_PAGE_NOTE_MAX_CHARS) {
 	const text = compactActionText(value);
@@ -3837,13 +3901,13 @@ function mergeReplayTarget(target: ReplayAnnotation, action: PageAction) {
 
 function buildReplayAnnotationsFromPageActions(pageActions: PageAction[] = []): ReplayAnnotation[] {
 	const annotations = new Map<string, ReplayAnnotation>();
-	const notes = new Map<string, { action: PageAction; text: string }>();
+	const notes = new Map<string, { action: PageAction; text: string; label: string }>();
 	for (const action of pageActions) {
 		if (!action || typeof action !== "object") continue;
 		if (action.type === "note") {
 			const noteText = compactActionText(action.citationText || action.detail);
 			if (!noteText) continue;
-			notes.set(replayActionKey(action), { action, text: noteText });
+			notes.set(replayActionKey(action), { action, text: noteText, label: storedOnPageNoteTitle(action.noteLabel) });
 			continue;
 		}
 		const isHighlight = action.type === "annotation" && (String(action.key || "").startsWith("highlight:") || action.label === "Highlighted text");
@@ -3876,6 +3940,7 @@ function buildReplayAnnotationsFromPageActions(pageActions: PageAction[] = []): 
 		const annotation = annotations.get(key);
 		if (!annotation) continue;
 		annotation.noteText = note.text;
+		if (note.label) annotation.noteLabel = note.label;
 		mergeReplayTarget(annotation, note.action);
 	}
 	return Array.from(annotations.values());
@@ -3937,7 +4002,8 @@ function buildSessionNotesMarkdown(session: RuntimeSession, exportedAt: Date = n
 			highlightCount += 1;
 			const note = stripReplayCitationMarkers(mark.noteText || "");
 			if (!note) continue;
-			lines.push("", `Note: ${note}`);
+			const noteTitle = storedOnPageNoteTitle(mark.noteLabel);
+			lines.push("", `${noteTitle ? `Note (${noteTitle})` : "Note"}: ${note}`);
 			noteCount += 1;
 		}
 	}
@@ -12293,6 +12359,10 @@ export const __browserRuntimeTest = {
 	buildFinalAssistantReplyForTest: buildFinalAssistantReply,
 	buildBlankReplyRetryPromptForTest: buildBlankReplyRetryPrompt,
 	compactOnPageNoteTextForTest: compactOnPageNoteText,
+	compactOnPageNoteTitleForTest: compactOnPageNoteTitle,
+	systemPromptForTest: ONHAND_SYSTEM_PROMPT,
+	onPageNoteParamsForTest: onPageNoteParams,
+	buildPageActionForTest: buildPageAction,
 	normalizeOptionalBrowserTargetNumbersForTest: normalizeOptionalBrowserTargetNumbers,
 	compactFreeTierVisualContextMessagesForTest: compactFreeTierVisualContextMessages,
 	compressFreeTierVisualContextMessagesForTest: compressFreeTierVisualContextMessages,
@@ -12766,7 +12836,8 @@ function createTools(
 		const annotationId = compactActionText(highlighted?.annotation?.annotationId);
 		if (!note || !annotationId) return "";
 		const noteCallId = `${highlightCallId}:note`;
-		const requested = { ...(params?.tabId !== undefined ? { tabId: params.tabId } : {}), annotationId, note };
+		const noteTitle = String(params?.noteTitle || "").trim();
+		const requested = { ...(params?.tabId !== undefined ? { tabId: params.tabId } : {}), annotationId, note, ...(noteTitle ? { label: noteTitle } : {}) };
 		const effective = prepareCommandParams(requested, "show_note") as Record<string, unknown>;
 		try {
 			const runNote = async () => guardCommand("browser_show_note", "show_note", effective) || (await host.runCommand("show_note", effective));
@@ -12799,9 +12870,11 @@ function createTools(
 		executionMode: options.sequential ? "sequential" : undefined,
 		async execute(_toolCallId, params) {
 			const companionNoteParams = commandName === "highlight_text" && (params as any)?.note ? { ...(params as any) } : null;
-			if (companionNoteParams) {
+			if (commandName === "highlight_text" && ((params as any)?.note !== undefined || (params as any)?.noteTitle !== undefined)) {
+				// The note and its title belong to the note command, not the highlight.
 				params = { ...(params as any) };
 				delete (params as any).note;
+				delete (params as any).noteTitle;
 			}
 			const executeCommand = async () => {
 				let result: any;
@@ -13580,6 +13653,7 @@ function buildPageAction(toolName: string, result: any): PageAction | null {
 		case "browser_show_note": {
 			const noteTextFull = String(details.note?.note || details.note?.text || details.note?.label || "").trim();
 			const noteText = truncate(noteTextFull || "Short explanation", 72);
+			const noteLabel = storedOnPageNoteTitle(details.note?.label);
 			return {
 				key: `note:${details.note?.annotationId || noteText}`,
 				type: "note",
@@ -13590,6 +13664,7 @@ function buildPageAction(toolName: string, result: any): PageAction | null {
 				label: "Added note",
 				detail: noteText,
 				citationText: noteTextFull || noteText,
+				...(noteLabel ? { noteLabel } : {}),
 				...(details.note?.pdfAnchor ? { pdfAnchor: details.note.pdfAnchor } : {}),
 			};
 		}
@@ -16439,10 +16514,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			return sourceWasOpenedByThisRequest ? { ...backgroundParams, newTab: false, freshBackgroundSource: true } : backgroundParams;
 		}
 		if (commandName === "show_note") {
-			const noteText = compactOnPageNoteText(targetedParams?.note || targetedParams?.text || targetedParams?.label || "");
+			const noteParams = onPageNoteParams(targetedParams);
+			const noteText = noteParams.note;
 			return {
-				...(targetedParams || {}),
-				note: noteText,
+				...noteParams,
 				annotationId: resolveActiveAnnotationId(activeRequest, targetedParams?.annotationId, noteText),
 				// Notes announce themselves the same way highlights do; see the
 				// highlight_text prep below.
@@ -19198,7 +19273,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 								tabId,
 								annotationId,
 								note: noteText,
-								label: "Onhand",
+								label: storedOnPageNoteTitle(action.noteLabel) || ON_PAGE_NOTE_DEFAULT_LABEL,
 								scrollIntoView: true,
 							});
 							noteShown = true;
@@ -19214,7 +19289,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 							tabId,
 							annotationId,
 							note: noteText,
-							label: "Onhand",
+							label: storedOnPageNoteTitle(action.noteLabel) || ON_PAGE_NOTE_DEFAULT_LABEL,
 							scrollIntoView: true,
 						});
 					}

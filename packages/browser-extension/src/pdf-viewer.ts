@@ -1899,6 +1899,8 @@ function attachPdfNoteInteractions(note: HTMLElement, annotation: HTMLElement) {
 	});
 }
 
+const NOTE_DEFAULT_LABEL = "Onhand";
+
 async function pdfShowNote(annotationId: string, noteText: string, options: Record<string, any> = {}) {
 	const rawAnnotationId = String(annotationId || "").trim();
 	const rawNoteText = String(noteText || "").trim();
@@ -1920,7 +1922,13 @@ async function pdfShowNote(annotationId: string, noteText: string, options: Reco
 	header.setAttribute("data-onhand-note-part", "header");
 	const label = document.createElement("span");
 	label.setAttribute("data-onhand-note-part", "label");
-	label.textContent = String(options.label || "Onhand");
+	// The line above the note: its own title when it has one, else "Onhand".
+	// A title keeps its casing (pH, mRNA, x); only the plain header is set in
+	// capitals.
+	const labelText = normalizeText(String(options.label || "")) || NOTE_DEFAULT_LABEL;
+	const titled = labelText !== NOTE_DEFAULT_LABEL;
+	label.textContent = labelText;
+	if (titled) label.setAttribute("data-onhand-note-titled", "true");
 	const toggle = document.createElement("button");
 	toggle.type = "button";
 	toggle.setAttribute("data-onhand-note-toggle", "true");
@@ -1932,9 +1940,9 @@ async function pdfShowNote(annotationId: string, noteText: string, options: Reco
 	header.append(label, toggle);
 	note.append(header, body);
 	Object.assign(label.style, {
-		font: "700 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-		letterSpacing: "0.08em",
-		textTransform: "uppercase",
+		font: `700 11px/${titled ? "1.25" : "1"} ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`,
+		letterSpacing: titled ? "normal" : "0.08em",
+		textTransform: titled ? "none" : "uppercase",
 		color: "#286983",
 	});
 	Object.assign(header.style, {
@@ -1970,6 +1978,7 @@ async function pdfShowNote(annotationId: string, noteText: string, options: Reco
 		noteId,
 		annotationId: rawAnnotationId,
 		text: rawNoteText.slice(0, 500),
+		label: labelText,
 		replacedCount,
 		container: { tag: "pdf-page", text: `Page ${getPageNumber(page) || "?"}`, pageNumber: getPageNumber(page) },
 		insertionTarget: { tag: "pdf-overlay" },

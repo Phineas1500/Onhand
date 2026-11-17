@@ -847,6 +847,12 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			  gap: 6px !important;
 			}
 
+			/* A note's own title keeps its casing (pH, mRNA, x) */
+			[data-onhand-note-part="label"][data-onhand-note-titled="true"] {
+			  text-transform: none !important;
+			  letter-spacing: normal !important;
+			}
+
 			[data-onhand-note-part="label"]::before {
 			  content: "" !important;
 			  display: inline-block !important;
@@ -1832,6 +1838,18 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		});
 	};
 
+	// The line above a note: its own title when it has one, else "Onhand".
+	// A title keeps its casing (pH, mRNA, x); only the plain header is set in
+	// capitals.
+	const NOTE_DEFAULT_LABEL = "Onhand";
+	const applyNoteLabel = (labelElement, value) => {
+		const text = String(value || "").replace(/\s+/g, " ").trim() || NOTE_DEFAULT_LABEL;
+		labelElement.textContent = text;
+		if (text === NOTE_DEFAULT_LABEL) labelElement.removeAttribute("data-onhand-note-titled");
+		else labelElement.setAttribute("data-onhand-note-titled", "true");
+		return text;
+	};
+
 	const createPdfNoteElement = (annotationId, noteText, options = {}) => {
 		const noteId = String(options.noteId || nextAnnotationId());
 		const note = document.createElement("div");
@@ -1846,7 +1864,7 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 
 		const label = document.createElement("span");
 		label.setAttribute("data-onhand-note-part", "label");
-		label.textContent = String(options.label || "Onhand");
+		applyNoteLabel(label, options.label);
 
 		const toggle = document.createElement("button");
 		toggle.type = "button";
@@ -5455,7 +5473,7 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		const overlayLayer = ensurePdfOverlayLayer(page);
 		if (!overlayLayer) throw new Error(`PDF overlay layer not found for id: ${annotationId}`);
 		const replacedCount = removeNotesForAnnotation(annotationId);
-		const labelText = String(options.label || "Onhand");
+		const labelText = String(options.label || "").replace(/\s+/g, " ").trim() || NOTE_DEFAULT_LABEL;
 		if (noteMayContainMath(noteText)) {
 			await ensureNoteKatexLoaded();
 		}
@@ -5481,6 +5499,7 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			noteId,
 			annotationId,
 			text: noteText.slice(0, 500),
+			label: labelText,
 			container: summarizeElement(page, { pageNumber: getPdfPageNumber(page) }),
 			insertionTarget: summarizeElement(overlayLayer),
 			insertionPosition: "pdf-overlay",
@@ -5517,7 +5536,7 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 
 		const label = document.createElement("div");
 		label.setAttribute("data-onhand-note-part", "label");
-		label.textContent = String(options.label || "Onhand");
+		const labelText = applyNoteLabel(label, options.label);
 
 		const body = document.createElement("div");
 		body.setAttribute("data-onhand-note-part", "body");
@@ -5539,6 +5558,7 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			noteId,
 			annotationId: rawAnnotationId,
 			text: rawNoteText.slice(0, 500),
+			label: labelText,
 			container: summarizeElement(container),
 			insertionTarget: summarizeElement(insertionPlacement.target),
 			insertionPosition: insertionPlacement.position,

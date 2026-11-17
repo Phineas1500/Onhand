@@ -17,6 +17,11 @@ export const MARK_POLICY = {
 	noteShapePhrase: "one to two sentences, under 280 characters",
 	/** What an interpretive note does. */
 	noteJobPhrase: "naming its role or explaining the hard step",
+	/** Note title shape: what the short line above a note says. */
+	noteTitlePhrase: "two to four words saying what this note is about, specific to its passage and in the note's language",
+	/** The per-note title rule: every note is headed by its own subject. */
+	noteTitles:
+		'Give every note a title (two to four words saying what this note is about, specific to its passage and in the note\'s language), so a reader can tell the notes on a page apart at a glance; a generic title such as "Note", "Key point" or "Core idea" tells them nothing. Do not repeat the title at the start of the note.',
 	/** The per-interpretive-mark note rule (v3.0: marks carry the depth). */
 	perMarkNotes:
 		"Give each interpretive highlight a short note (one to two sentences, under 280 characters) naming its role or explaining the hard step; do not paraphrase the highlight, and skip notes on purely confirmatory marks.",

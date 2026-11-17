@@ -2738,6 +2738,45 @@ async function assertNoteDoesNotClearFloats() {
 	assert.equal(note.previousElementSibling?.tagName, "P", "note should be inserted directly after the highlighted paragraph");
 }
 
+// A note is headed by its own title when the call gives one. A title keeps
+// its casing (the plain "Onhand" header is the only one set in capitals), and
+// the result reports the header that was drawn so it can be saved with the note.
+async function assertNotesShowTheirTitle() {
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<p>Buffers resist a change in pH when a small amount of acid is added.</p>
+			<p>Messenger RNA carries the code from the nucleus to the ribosome.</p>
+			<p>Enzymes lower the activation energy of a reaction.</p>
+		</main>
+	`);
+	const labelOf = (annotationId) =>
+		dom.window.document.querySelector(`[data-onhand-note-for="${annotationId}"] [data-onhand-note-part="label"]`);
+	const titled = await toolkit.highlightText("Buffers resist a change in pH", { scrollIntoView: false });
+	const titledNote = await toolkit.showNote(titled.annotationId, "The conjugate base mops up the added acid.", { label: "  Why pH   holds ", scrollIntoView: false });
+	assert.equal(titledNote.label, "Why pH holds", "the result reports the title shown above the note");
+	assert.equal(labelOf(titled.annotationId).textContent, "Why pH holds");
+	assert.equal(labelOf(titled.annotationId).getAttribute("data-onhand-note-titled"), "true");
+	assert.equal(dom.window.getComputedStyle(labelOf(titled.annotationId)).textTransform, "none", "a title keeps its casing");
+
+	const plain = await toolkit.highlightText("Messenger RNA carries the code", { scrollIntoView: false });
+	const plainNote = await toolkit.showNote(plain.annotationId, "This is transcription's output.", { scrollIntoView: false });
+	assert.equal(plainNote.label, "Onhand", "a note without a title keeps the plain header");
+	assert.equal(labelOf(plain.annotationId).textContent, "Onhand");
+	assert.equal(labelOf(plain.annotationId).hasAttribute("data-onhand-note-titled"), false);
+	assert.equal(dom.window.getComputedStyle(labelOf(plain.annotationId)).textTransform, "uppercase", "the plain header keeps its capitals");
+
+	const named = await toolkit.highlightText("Enzymes lower the activation energy", { scrollIntoView: false });
+	const namedNote = await toolkit.showNote(named.annotationId, "Lower barrier, faster reaction.", { label: "Onhand", scrollIntoView: false });
+	assert.equal(namedNote.label, "Onhand");
+	assert.equal(labelOf(named.annotationId).hasAttribute("data-onhand-note-titled"), false, "the default header named outright is still the plain header");
+
+	const captured = await toolkit.captureState();
+	// Spread into this realm's array: the toolkit's arrays belong to the page.
+	const capturedTitles = [...(captured?.annotations || [])].map((annotation) => annotation?.note?.label);
+	assert.deepEqual(capturedTitles, ["Why pH holds", "Onhand", "Onhand"], "a captured page keeps each note's header");
+	console.log("Notes show their title; untitled notes keep the plain header passed");
+}
+
 async function assertExactSourceModeDoesNotApproximate() {
 	const { toolkit } = await createToolkit(`
 		<main>
@@ -4981,6 +5020,7 @@ async function main() {
 	await assertZeroViewportTabStillHighlights();
 	await assertLooseTextOutsideProseContainersHighlights();
 	await assertFuzzyMatchingWorksOutsideLatinScript();
+	await assertNotesShowTheirTitle();
 
 	console.log("Page toolkit regressions: PASS");
 }
