@@ -2738,6 +2738,43 @@ async function assertNoteDoesNotClearFloats() {
 	assert.equal(note.previousElementSibling?.tagName, "P", "note should be inserted directly after the highlighted paragraph");
 }
 
+// A study guide wrapped its content in <div class="page">, which the PDF page
+// selector also matches. Scrolling to a new note then laid the web note card
+// out as a PDF overlay: absolutely positioned, on top of the heading and
+// paragraph above its highlight (2026-11-20).
+async function assertWebNoteInsidePdfLookalikeWrapperStaysInFlow() {
+	for (const wrapper of ['<div class="page">', '<div data-page="guide">', '<div aria-label="Page content">']) {
+		const { dom, toolkit } = await createToolkit(`
+			${wrapper}
+				<main><section>
+					<p>The textbook version, with no chunks and no special tokens.</p>
+					<pre><code>def count_pairs(ids):
+    counts = {}
+    for a, b in zip(ids, ids[1:]):
+        counts[(a, b)] = counts.get((a, b), 0) + 1
+    return counts</code></pre>
+					<h3>What every spec has to settle</h3>
+				</section></main>
+			</div>
+		`);
+		const highlight = await toolkit.highlightText("for a, b in zip(ids, ids[1:]):", { scrollIntoView: false });
+		assert.equal(highlight.kind, "inline", `${wrapper}: a web page highlight is an inline highlight`);
+		// No scrollIntoView option: the note is scrolled to, as in a real call.
+		const shown = await toolkit.showNote(highlight.annotationId, "zip lines each id up with its next neighbor.");
+		assert.equal(shown.scrolled?.targetKind, "note", `${wrapper}: the new note is scrolled to`);
+		const note = dom.window.document.querySelector('[data-onhand-note-kind="card"]');
+		assert.ok(note, `${wrapper}: note card was not inserted`);
+		assert.equal(note.previousElementSibling?.tagName, "PRE", `${wrapper}: the note follows the code block`);
+		for (const property of ["position", "top", "left", "width", "margin", "z-index", "display"]) {
+			assert.equal(note.style.getPropertyValue(property), "", `${wrapper}: a web note card gets no overlay ${property}`);
+		}
+		assert.equal(dom.window.getComputedStyle(note).position, "relative", `${wrapper}: the note stays in the page's flow`);
+		// Scrolling back to it later (a citation click) leaves it in flow too.
+		await toolkit.scrollToAnnotation(highlight.annotationId, { target: "note" });
+		assert.equal(note.style.getPropertyValue("position"), "", `${wrapper}: scrolling to the note again does not float it`);
+	}
+}
+
 // A note is headed by its own title when the call gives one. A title keeps
 // its casing (the plain "Onhand" header is the only one set in capitals), and
 // the result reports the header that was drawn so it can be saved with the note.
@@ -4960,6 +4997,7 @@ async function main() {
 	});
 
 	await assertNoteDoesNotClearFloats();
+	await assertWebNoteInsidePdfLookalikeWrapperStaysInFlow();
 	await assertExactSourceModeDoesNotApproximate();
 	await assertExactSourceModeReusesExistingHighlight();
 	await assertHighlightTextPreservesExistingAnnotationsByDefault();

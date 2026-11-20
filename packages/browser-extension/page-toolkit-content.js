@@ -5424,7 +5424,12 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			? String(options.block)
 			: "center";
 		const preferredTarget = options.target === "note" ? "note" : "annotation";
-		if (preferredTarget === "note" && note) {
+		// Only a PDF highlight's note is an overlay that needs placing. A web
+		// page can wrap its content in something the PDF page selector also
+		// matches (a plain ".page" wrapper, "[data-page]"); placing a web note
+		// card as an overlay there lifted it out of the page's flow and onto
+		// the text above its highlight.
+		if (preferredTarget === "note" && note && annotationElement.getAttribute("data-onhand-highlight-kind") === "pdf") {
 			setPdfNoteCollapsed(note, false);
 			const page = annotationElement.closest?.(PDF_PAGE_CLOSEST_SELECTOR);
 			if (page instanceof HTMLElement) positionPdfNoteElement(note, annotationElement, page);
