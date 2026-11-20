@@ -12,6 +12,8 @@ import { runCodexSpeedRegressions } from "./lib/codex-speed-regressions.mjs";
 import { runNoteTitleRegressions } from "./lib/note-title-regressions.mjs";
 import { runHighlightMissRegressions } from "./lib/highlight-miss-regressions.mjs";
 import { runHighlightRefusalRegressions } from "./lib/highlight-refusal-regressions.mjs";
+import { runTurnLengthRegressions } from "./lib/turn-length-regressions.mjs";
+import { runStaleHighlightRegressions } from "./lib/stale-highlight-regressions.mjs";
 import assert from "node:assert/strict";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
@@ -13598,6 +13600,8 @@ async function main() {
 	await runNoteTitleRegressions({ installChromeStorageStub });
 	await runHighlightMissRegressions({ installChromeStorageStub });
 	await runHighlightRefusalRegressions({ installChromeStorageStub });
+	await runTurnLengthRegressions({ installChromeStorageStub });
+	await runStaleHighlightRegressions({ installChromeStorageStub, createReplayHost, waitForRuntimeCompletion, getStoredStore });
 	await assertPreparationCanBeStoppedWithoutLateContinuation();
 	await assertColdSubmissionAndSessionTransitionsAreExclusive();
 	await assertStorageFailuresDoNotWedgeRequests();

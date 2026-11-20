@@ -317,7 +317,12 @@ mark it, such as a viewer without a text layer or an embed inside a web
 page), `tab_kind` (a tab that is not a web page), `region` (a region
 highlight the PDF viewer turned down), `not_pdf` (an address that looked
 like a PDF and was a web page) and `pdf_load` (the viewer could not load or
-read the PDF). They never contain page text or error messages; the Worker
+read the PDF). Two more name a turn's own state: `turn_limit` (the turn had
+made more than 30 model calls, so page reads and navigation were refused and
+the model was told to answer; past 40 calls the next model call goes out
+without tools) and `stale_mark` (a highlight asked for by id was no longer on
+the page, usually after a reload, and could not be put back from the
+session's saved text). They never contain page text or error messages; the Worker
 drops any entry that is not in that shape. Numeric fields are timestamp, status, duration, body bytes,
 quota current, quota cap, prompt tokens, completion tokens, total tokens,
 cost, action count, artifact count, tool step count, tool failure count,

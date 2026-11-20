@@ -88867,6 +88867,7 @@ function highlightRetryBudgetSpent(deadline, now = Date.now()) {
   return deadline > 0 && now >= deadline;
 }
 var ANNOTATION_COMMAND_TIMEOUT_MS = 12e3;
+var MISSING_ANNOTATION_ERROR_PATTERN = /no annotation found with id|annotation not found/i;
 var TEACHING_SOURCE_HIGHLIGHT_MAX = 6;
 var TEACHING_SOURCE_NOTE_MAX = 6;
 var COMPACT_TEACHING_HIGHLIGHT_ERROR_LIMIT = 2;
@@ -89244,6 +89245,49 @@ function buildRepeatedToolFailureAnswerNowGuardResult(toolName2, commandName, re
     }
   };
 }
+var TURN_MODEL_CALL_ANSWER_NOW_LIMIT = 30;
+var TURN_MODEL_CALL_FINAL_ANSWER_LIMIT = 40;
+var TURN_LENGTH_ALLOWED_COMMANDS = /* @__PURE__ */ new Set([...MARK_COMMANDS, "scroll_to_annotation"]);
+function turnModelCallsSpent(request2) {
+  return Math.max(0, Number(request2?.modelCallCount) || 0) + Math.max(0, Number(request2?.internalModelCallCount) || 0);
+}
+function buildTurnLengthAnswerNowGuardResult(toolName2, commandName, request2) {
+  if (TURN_LENGTH_ALLOWED_COMMANDS.has(commandName)) return null;
+  if (!request2 || request2.aborted) return null;
+  if (turnModelCallsSpent(request2) <= TURN_MODEL_CALL_ANSWER_NOW_LIMIT) return null;
+  return {
+    guardrail: {
+      kind: "turn_length_answer_now",
+      blockedTool: toolName2,
+      blockedCommand: commandName,
+      message: [
+        "This turn has already taken many steps, and the user is still waiting for an answer.",
+        `Do not call ${toolName2} or other page read, navigation, or interaction tools for this turn.`,
+        "Answer the user's question now from what you have already read and done; you may still highlight or annotate text you have already read.",
+        "If part of the task is unfinished, say in one short sentence what is left so the user can ask for it next. Never mention internal budgets, guardrails, or tool limits."
+      ].join(" ")
+    }
+  };
+}
+var TURN_LENGTH_FINAL_ANSWER_INSTRUCTION = [
+  "This turn has taken too many steps, so tools are no longer available in it.",
+  "Write the final answer to the user's question now, from what you have already read and done in this turn.",
+  "If part of the task is unfinished, say in one short sentence what is left so the user can ask for it next.",
+  "Do not say you will keep working, and never mention internal budgets, guardrails, or tool limits."
+].join(" ");
+function turnLengthToolsAreOff(request2) {
+  return turnModelCallsSpent(request2) >= TURN_MODEL_CALL_FINAL_ANSWER_LIMIT;
+}
+function turnLengthFinalAnswerStreamArgs(request2, context, options) {
+  if (!request2 || turnModelCallsSpent(request2) <= TURN_MODEL_CALL_FINAL_ANSWER_LIMIT) return null;
+  return {
+    context: {
+      ...context,
+      systemPrompt: [String(context?.systemPrompt || "").trim(), TURN_LENGTH_FINAL_ANSWER_INSTRUCTION].filter(Boolean).join("\n\n")
+    },
+    options: { ...options, toolChoice: "none" }
+  };
+}
 function highlightTargetIsOnhandPdfViewer(request2, tabId) {
   if (!Number.isFinite(tabId) || tabId <= 0) return false;
   const initialTab = request2?.initialActiveTab;
@@ -89263,12 +89307,14 @@ function preferredHighlightMissError(matcherError, scanError) {
 }
 function classifyToolFailureTrace(trace, context = {}) {
   const text = String(trace?.error || trace?.resultSummary || "").toLowerCase();
+  if ((trace?.resultDetails?.guardrail?.kind || trace?.details?.guardrail?.kind) === "turn_length_answer_now") return "turn_limit";
   if (isGuardrailBlockedTrace(trace) || text.startsWith("guardrail blocked")) return "guard";
   if (/timed? ?out|timeout|took too long/.test(text)) return "timeout";
   if (/on the page but hidden/.test(text)) return "hidden";
   if (/unsupported pdf annotation surface|pdf in an embedded viewer|no readable text layer|does not expose selectable page text/.test(text)) return "pdf_surface";
   if (/only run on web or local-file tabs/.test(text)) return "tab_kind";
   if (/region highlight requires|instead of a region|region rect resolved/.test(text)) return "region";
+  if (MISSING_ANNOTATION_ERROR_PATTERN.test(text)) return "stale_mark";
   if (/no (visible )?(pdf |readable )?text matched|not found on (the )?page|could not (find|locate)|no match|saved source text is not currently loaded/.test(text)) {
     if (trace?.toolName !== "browser_highlight_text") return "no_match";
     if (/matched that formula/.test(text)) return "formula";
@@ -95209,6 +95255,10 @@ ${nearby}` : "", message].filter(Boolean).join("\n");
     }
     case "browser_scroll_to_annotation": {
       const annotationId = details.annotation?.annotationId || "(unknown annotation)";
+      const previousAnnotationId = details.restoredAnnotation?.previousAnnotationId;
+      if (previousAnnotationId && previousAnnotationId !== annotationId) {
+        return `Scrolled to annotationId ${annotationId}. This is the same source highlight as ${previousAnnotationId}, put back after its page reloaded; cite it as ${annotationId}.`;
+      }
       return `Scrolled to annotationId ${annotationId}.`;
     }
     case "browser_clear_annotations":
@@ -96449,6 +96499,9 @@ var __browserRuntimeTest = {
   codexServiceTierForTest: codexServiceTier,
   normalizeCodexSpeedForTest: normalizeCodexSpeed,
   buildRepeatedToolFailureAnswerNowGuardResultForTest: buildRepeatedToolFailureAnswerNowGuardResult,
+  buildTurnLengthAnswerNowGuardResultForTest: buildTurnLengthAnswerNowGuardResult,
+  turnLengthToolsAreOffForTest: turnLengthToolsAreOff,
+  turnLengthFinalAnswerStreamArgsForTest: turnLengthFinalAnswerStreamArgs,
   ensurePdfAbsenceReviewScopeForTest: ensurePdfAbsenceReviewScope,
   setLearnerStateModeForTest: setLearnerStateMode,
   buildHighlightTimeoutTabGuardResultForTest: buildHighlightTimeoutTabGuardResult,
@@ -96988,7 +97041,7 @@ function createRecordLearningEventTool(recordLearningEvent) {
 }
 function createTools(host, artifactHooks, prepareCommandParams = (params) => params, recordLearningEvent = async (event) => applyLearningEvent(createEmptyLearnerState("learning"), event, { mode: "learning" }), recordEffectiveCommandParams = () => {
 }, guardCommand = () => null, runHighlightScanFallback = async () => null, recordCompanionToolCall = () => {
-}) {
+}, restoreMissingAnnotation = async () => null) {
   const addCompanionNote = async (highlightCallId, params, highlighted) => {
     const note = String(params?.note || "").trim();
     const annotationId = compactActionText(highlighted?.annotation?.annotationId);
@@ -97057,6 +97110,18 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
             }
           };
         };
+        const runScrollToAnnotation = async (requestedParams) => {
+          try {
+            return await runCommandWithParams(requestedParams);
+          } catch (error2) {
+            if (!MISSING_ANNOTATION_ERROR_PATTERN.test(String(error2?.message || error2))) throw error2;
+            const effectiveParams = prepareCommandParams(requestedParams, commandName);
+            if (effectiveParams?.__onhandUntrustedTabId != null) throw error2;
+            const restored = await withToolCommandTimeout(name, HIGHLIGHT_TOOL_CALL_TIMEOUT_MS, () => restoreMissingAnnotation(effectiveParams)).catch(() => null);
+            if (!restored) throw error2;
+            return restored;
+          }
+        };
         let lastHighlightError = null;
         const tryHighlightScanFallback = async (requestedParams, lastError) => {
           if (commandName !== "highlight_text") return null;
@@ -97093,7 +97158,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
             if (commandName === "highlight_text" && (retryBudgetSpent(lastHighlightError) || shouldSkipOriginalHighlightAttempt(params?.text, attemptedCandidateCount))) {
               throw lastHighlightError || new Error(`No visible text matched: ${params?.text || ""}`);
             }
-            result = await runCommandWithParams(params);
+            result = commandName === "scroll_to_annotation" ? await runScrollToAnnotation(params) : await runCommandWithParams(params);
             if (commandName === "highlight_text") await rejectWeakApproximateLanding(result, params);
           }
         } catch (error2) {
@@ -99622,7 +99687,7 @@ function createOnhandBrowserRuntime(host) {
           learningMode ? "learning" : "answer"
         ),
         (toolName2, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName2, toolCallId, effectiveParams),
-        (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildNoPageChangesGuardResult(toolName2, commandName, prompt) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedToolFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
+        (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildNoPageChangesGuardResult(toolName2, commandName, prompt) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedToolFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildTurnLengthAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
         async (effectiveParams) => {
           if (!effectiveParams?.scanPage) return null;
           const text = compactActionText(effectiveParams?.text);
@@ -99642,7 +99707,8 @@ function createOnhandBrowserRuntime(host) {
             pdfAnchor: effectiveParams?.pdfAnchor
           });
         },
-        (...call) => recordCompanionToolCall(session, ...call)
+        (...call) => recordCompanionToolCall(session, ...call),
+        (effectiveParams) => restoreMissingSessionAnnotation(session, effectiveParams)
       ),
       prompt,
       attachments,
@@ -99674,6 +99740,7 @@ function createOnhandBrowserRuntime(host) {
     const agentMessages = messagesOverride || activeAgent?.state.messages || [];
     let finalError = activeRequest.aborted ? null : error2 || extractAssistantFailure(agentMessages);
     let assistantText = activeRequest.reply.trim() || extractAssistantText(agentMessages).trim();
+    const toolsAreOff = turnLengthToolsAreOff(activeRequest);
     if (finalError && !activeRequest.aborted && !activeRequest.transientProviderRetry && activeAgent && isTransientProviderError(finalError)) {
       activeRequest.transientProviderRetry = true;
       resetAssistantDraftText(activeRequest);
@@ -99710,7 +99777,7 @@ function createOnhandBrowserRuntime(host) {
         finalError = null;
       }
     }
-    const missingToolTrace = !finalError && !activeRequest.aborted && !activeRequest.missingToolRetry ? findMissingKnownBrowserToolTrace(activeRequest) : null;
+    const missingToolTrace = !finalError && !activeRequest.aborted && !activeRequest.missingToolRetry && !toolsAreOff ? findMissingKnownBrowserToolTrace(activeRequest) : null;
     if (missingToolTrace && activeAgent) {
       const missingToolName = String(missingToolTrace.toolName || "");
       const promptText = String(activeRequest.prompt || activeRequest.displayPrompt || "");
@@ -99759,7 +99826,7 @@ function createOnhandBrowserRuntime(host) {
         if (roundReadNoNewSource && activeRequest.preparationTiming) {
           activeRequest.preparationTiming.learningEvidenceVerdicts = [...activeRequest.preparationTiming.learningEvidenceVerdicts || [], "stopped: the last research round read no new source"];
         }
-        if (activeAgent && !activeRequest.aborted && retryCount < retryLimit && !roundReadNoNewSource) {
+        if (activeAgent && !activeRequest.aborted && !toolsAreOff && retryCount < retryLimit && !roundReadNoNewSource) {
           activeRequest.learningResearchPlanRetryCount = retryCount + 1;
           activeRequest.learningResearchSourcesBeforeRound = sourcesRead;
           resetAssistantDraftText(activeRequest);
@@ -99793,7 +99860,7 @@ function createOnhandBrowserRuntime(host) {
     }
     if (!finalError && !activeRequest.aborted && activeRequest.source !== "live-responses" && !activeRequest.learningResearchPlan?.requiresWorkspaceResearch && shouldRequireLearningWorkspaceEvidence(activeRequest)) {
       const retryCount = Number(activeRequest.learningWorkspaceEvidenceRetryCount || 0);
-      if (activeAgent && retryCount < 2) {
+      if (activeAgent && retryCount < 2 && !toolsAreOff) {
         activeRequest.learningWorkspaceEvidenceRetryCount = retryCount + 1;
         resetAssistantDraftText(activeRequest);
         blankSupersededAssistantDraft(requestId);
@@ -99805,7 +99872,7 @@ function createOnhandBrowserRuntime(host) {
       }
       assistantText = buildLearningWorkspaceEvidenceFallbackReply(activeRequest);
     }
-    if (!finalError && !activeRequest.aborted && shouldRequireCitedSourceRetry(activeRequest) && activeAgent) {
+    if (!finalError && !activeRequest.aborted && !toolsAreOff && shouldRequireCitedSourceRetry(activeRequest) && activeAgent) {
       activeRequest.citedSourceRetry = true;
       resetAssistantDraftText(activeRequest);
       blankSupersededAssistantDraft(requestId);
@@ -99815,7 +99882,7 @@ function createOnhandBrowserRuntime(host) {
       }, activeRequest.abortController?.signal);
       return;
     }
-    if (!finalError && !activeRequest.aborted && shouldRequirePageSourceMarkerRetry(activeRequest, assistantText) && activeAgent) {
+    if (!finalError && !activeRequest.aborted && !toolsAreOff && shouldRequirePageSourceMarkerRetry(activeRequest, assistantText) && activeAgent) {
       activeRequest.pageSourceMarkerRetry = true;
       resetAssistantDraftText(activeRequest);
       blankSupersededAssistantDraft(requestId);
@@ -99825,7 +99892,7 @@ function createOnhandBrowserRuntime(host) {
       }, activeRequest.abortController?.signal);
       return;
     }
-    if (!finalError && !activeRequest.aborted && shouldRequirePdfAnchorRetry(activeRequest) && activeAgent) {
+    if (!finalError && !activeRequest.aborted && !toolsAreOff && shouldRequirePdfAnchorRetry(activeRequest) && activeAgent) {
       activeRequest.pdfAnchorRetry = true;
       resetAssistantDraftText(activeRequest);
       blankSupersededAssistantDraft(requestId);
@@ -100089,7 +100156,7 @@ function createOnhandBrowserRuntime(host) {
             });
             void publishState({
               pageActions: [...activeRequest.pageActions],
-              status: guardrail.kind === "repeated_highlight_failure" ? "Answering without highlights..." : "Trying a different approach..."
+              status: guardrail.kind === "repeated_highlight_failure" ? "Answering without highlights..." : guardrail.kind === "turn_length_answer_now" ? "Wrapping up the answer..." : "Trying a different approach..."
             });
             break;
           }
@@ -101560,6 +101627,45 @@ function createOnhandBrowserRuntime(host) {
     }
     return restored;
   }
+  async function restoreMissingSessionAnnotation(session, params = {}) {
+    const staleAnnotationId = compactActionText(params?.annotationId);
+    if (!staleAnnotationId) return null;
+    const actions = collectSessionPageActions(session);
+    const source = actions.find(
+      (action) => isHighlightPageAction(action) && (compactActionText(action.annotationId) === staleAnnotationId || actionKeySuffix(action, "highlight:") === staleAnnotationId || (action.citationAnnotationIds || []).includes(staleAnnotationId))
+    );
+    if (!source) return null;
+    const annotation = buildReplayAnnotationsFromPageActions(actions).find((candidate) => (candidate.actionKeys || []).includes(source.key));
+    if (!annotation?.matchedText) return null;
+    const state2 = await host.snapshotState();
+    const requestedTabId = Number(params?.tabId || 0);
+    const tab = requestedTabId > 0 ? flattenTabs(state2).find((candidate) => candidate.id === requestedTabId) : pickActiveTab(state2, typeof params?.windowId === "number" ? params.windowId : void 0);
+    if (!tab || !tabMatchesSavedTarget(tab, String(annotation.url || "").trim(), String(annotation.title || "").trim().toLowerCase())) return null;
+    const highlighted = await highlightTextWithReplayCandidates(tab.id, annotation.matchedText, {
+      scrollIntoView: false,
+      pdfAnchor: annotation.pdfAnchor,
+      anchor: annotation.anchor,
+      scanPage: true,
+      scanDeadline: Date.now() + HIGHLIGHT_SCAN_DEADLINE_MS
+    });
+    const annotationId = compactActionText(highlighted?.annotation?.annotationId);
+    if (!annotationId) return null;
+    updateSessionReplayActionTargets(session, annotation, tab, highlighted.annotation);
+    if (annotation.noteText && !highlighted.annotation.reusedExisting) {
+      try {
+        await host.runCommand("show_note", { tabId: tab.id, annotationId, note: annotation.noteText, label: annotation.noteLabel || "Onhand", scrollIntoView: false });
+      } catch (error2) {
+        host.log?.("restored highlight note failed", error2);
+      }
+    }
+    const scrolled = await host.runCommand("scroll_to_annotation", {
+      tabId: tab.id,
+      annotationId,
+      ...params?.block ? { block: params.block } : {},
+      ...params?.target ? { target: params.target } : {}
+    });
+    return { ...scrolled, restoredAnnotation: { previousAnnotationId: staleAnnotationId, annotationId } };
+  }
   function restoredTargetToReplayAnnotation(target) {
     return {
       key: "",
@@ -102486,7 +102592,7 @@ Mark and answer from this text. Call browser_extract_content again only to conti
                 learningMode ? "learning" : "answer"
               ),
               (toolName2, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName2, toolCallId, effectiveParams),
-              (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildNoPageChangesGuardResult(toolName2, commandName, prompt) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedToolFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
+              (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildNoPageChangesGuardResult(toolName2, commandName, prompt) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedToolFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildTurnLengthAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
               async (effectiveParams) => {
                 if (!effectiveParams?.scanPage) return null;
                 const text = compactActionText(effectiveParams?.text);
@@ -102506,7 +102612,8 @@ Mark and answer from this text. Call browser_extract_content again only to conti
                   pdfAnchor: effectiveParams?.pdfAnchor
                 });
               },
-              (...call) => recordCompanionToolCall(session, ...call)
+              (...call) => recordCompanionToolCall(session, ...call),
+              (effectiveParams) => restoreMissingSessionAnnotation(session, effectiveParams)
             ),
             prompt,
             attachments,
@@ -102530,8 +102637,10 @@ Mark and answer from this text. Call browser_extract_content again only to conti
               if (activeRequest.modelCallCount === 1 && activeRequest.preparationTiming) {
                 activeRequest.preparationTiming.firstModelCallMs = Date.now() - preparationStartedAt;
               }
-              return streamOnhandFast(streamModel, streamContext, {
-                ...streamOptions,
+              const finalAnswer = turnLengthFinalAnswerStreamArgs(activeRequest, streamContext, streamOptions);
+              if (finalAnswer) void publishState({ status: "Wrapping up the answer..." });
+              return streamOnhandFast(streamModel, finalAnswer?.context || streamContext, {
+                ...finalAnswer?.options || streamOptions,
                 onhandTelemetry: {
                   turnId: requestId,
                   sessionId: session.id

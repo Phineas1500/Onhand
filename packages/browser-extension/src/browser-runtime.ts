@@ -1641,6 +1641,8 @@ function highlightRetryBudgetSpent(deadline: number, now = Date.now()) {
 // one. (Live failure signature: highlights surviving at ~5.9s while notes died
 // at ~6.0s under the old 6s cap.)
 const ANNOTATION_COMMAND_TIMEOUT_MS = 12000;
+// The page toolkit's and the PDF viewer's words for a mark that is not there.
+const MISSING_ANNOTATION_ERROR_PATTERN = /no annotation found with id|annotation not found/i;
 const TEACHING_SOURCE_HIGHLIGHT_MAX = 6;
 const TEACHING_SOURCE_NOTE_MAX = 6;
 const COMPACT_TEACHING_HIGHLIGHT_ERROR_LIMIT = 2;
@@ -2092,6 +2094,71 @@ function buildRepeatedToolFailureAnswerNowGuardResult(toolName: string, commandN
 	};
 }
 
+// A turn that keeps reading, clicking and scrolling without failing has no
+// failure limit to stop it. On Onhand Free the proxy refuses a turn's 51st
+// model call, so two real turns (2026-11-19) worked for two minutes and then
+// showed only that refusal, with everything they had read thrown away; other
+// providers have no limit at all. Ordinary turns stay under 20 model calls
+// (the largest of 267 real Free turns and 342 eval turns was 18), so past the
+// first limit the turn is told to answer from what it has, and past the
+// second the next model call can only be the answer.
+const TURN_MODEL_CALL_ANSWER_NOW_LIMIT = 30;
+const TURN_MODEL_CALL_FINAL_ANSWER_LIMIT = 40;
+const TURN_LENGTH_ALLOWED_COMMANDS = new Set([...MARK_COMMANDS, "scroll_to_annotation"]);
+
+// Planning and other internal calls spend the same allowance on Onhand Free.
+function turnModelCallsSpent(request: any) {
+	return Math.max(0, Number(request?.modelCallCount) || 0) + Math.max(0, Number(request?.internalModelCallCount) || 0);
+}
+
+function buildTurnLengthAnswerNowGuardResult(toolName: string, commandName: string, request: any) {
+	if (TURN_LENGTH_ALLOWED_COMMANDS.has(commandName)) return null;
+	if (!request || request.aborted) return null;
+	if (turnModelCallsSpent(request) <= TURN_MODEL_CALL_ANSWER_NOW_LIMIT) return null;
+	return {
+		guardrail: {
+			kind: "turn_length_answer_now",
+			blockedTool: toolName,
+			blockedCommand: commandName,
+			message: [
+				"This turn has already taken many steps, and the user is still waiting for an answer.",
+				`Do not call ${toolName} or other page read, navigation, or interaction tools for this turn.`,
+				"Answer the user's question now from what you have already read and done; you may still highlight or annotate text you have already read.",
+				"If part of the task is unfinished, say in one short sentence what is left so the user can ask for it next. Never mention internal budgets, guardrails, or tool limits.",
+			].join(" "),
+		},
+	};
+}
+
+const TURN_LENGTH_FINAL_ANSWER_INSTRUCTION = [
+	"This turn has taken too many steps, so tools are no longer available in it.",
+	"Write the final answer to the user's question now, from what you have already read and done in this turn.",
+	"If part of the task is unfinished, say in one short sentence what is left so the user can ask for it next.",
+	"Do not say you will keep working, and never mention internal budgets, guardrails, or tool limits.",
+].join(" ");
+
+// True once the turn's next model call would go out without tools. The
+// answer-time retries that ask for more page work (a missing mark, a cited
+// source, another research round) are skipped then: they could only replace
+// the answer with one written without the tools they ask for.
+function turnLengthToolsAreOff(request: any) {
+	return turnModelCallsSpent(request) >= TURN_MODEL_CALL_FINAL_ANSWER_LIMIT;
+}
+
+// Blocked tools still cost a model call each, so a model that keeps asking
+// would reach the proxy's refusal anyway. Past the second limit the call goes
+// out unable to call tools: whatever it returns is the turn's answer.
+function turnLengthFinalAnswerStreamArgs(request: any, context: any, options: any) {
+	if (!request || turnModelCallsSpent(request) <= TURN_MODEL_CALL_FINAL_ANSWER_LIMIT) return null;
+	return {
+		context: {
+			...context,
+			systemPrompt: [String(context?.systemPrompt || "").trim(), TURN_LENGTH_FINAL_ANSWER_INSTRUCTION].filter(Boolean).join("\n\n"),
+		},
+		options: { ...options, toolChoice: "none" },
+	};
+}
+
 // Scrolling a tab to look for a missed quote helps on pages that load text as
 // they scroll. Onhand's PDF viewer searches every page of the document
 // itself, so there the scan found nothing new and replaced the matcher's
@@ -2127,6 +2194,9 @@ function preferredHighlightMissError(matcherError: unknown, scanError: unknown) 
 // kind of failure only, never page text, arguments, or the error message.
 function classifyToolFailureTrace(trace: any, context: { pdf?: boolean } = {}) {
 	const text = String(trace?.error || trace?.resultSummary || "").toLowerCase();
+	// The turn ran long enough to be told to answer: its own name, so long
+	// turns can be counted apart from the mark budgets.
+	if ((trace?.resultDetails?.guardrail?.kind || trace?.details?.guardrail?.kind) === "turn_length_answer_now") return "turn_limit";
 	if (isGuardrailBlockedTrace(trace) || text.startsWith("guardrail blocked")) return "guard";
 	if (/timed? ?out|timeout|took too long/.test(text)) return "timeout";
 	if (/on the page but hidden/.test(text)) return "hidden";
@@ -2137,6 +2207,8 @@ function classifyToolFailureTrace(trace: any, context: { pdf?: boolean } = {}) {
 	if (/unsupported pdf annotation surface|pdf in an embedded viewer|no readable text layer|does not expose selectable page text/.test(text)) return "pdf_surface";
 	if (/only run on web or local-file tabs/.test(text)) return "tab_kind";
 	if (/region highlight requires|instead of a region|region rect resolved/.test(text)) return "region";
+	// A mark the turn asked for by id is not on the page, and could not be put back.
+	if (MISSING_ANNOTATION_ERROR_PATTERN.test(text)) return "stale_mark";
 	if (/no (visible )?(pdf |readable )?text matched|not found on (the )?page|could not (find|locate)|no match|saved source text is not currently loaded/.test(text)) {
 		if (trace?.toolName !== "browser_highlight_text") return "no_match";
 		if (/matched that formula/.test(text)) return "formula";
@@ -10683,6 +10755,11 @@ function toolResultTextForModelRaw(toolName: string, result: any) {
 		}
 		case "browser_scroll_to_annotation": {
 			const annotationId = details.annotation?.annotationId || "(unknown annotation)";
+			const previousAnnotationId = details.restoredAnnotation?.previousAnnotationId;
+			// The page lost the mark (a reload) and it was put back under a new id.
+			if (previousAnnotationId && previousAnnotationId !== annotationId) {
+				return `Scrolled to annotationId ${annotationId}. This is the same source highlight as ${previousAnnotationId}, put back after its page reloaded; cite it as ${annotationId}.`;
+			}
 			return `Scrolled to annotationId ${annotationId}.`;
 		}
 		case "browser_clear_annotations":
@@ -12250,6 +12327,9 @@ export const __browserRuntimeTest = {
 	codexServiceTierForTest: codexServiceTier,
 	normalizeCodexSpeedForTest: normalizeCodexSpeed,
 	buildRepeatedToolFailureAnswerNowGuardResultForTest: buildRepeatedToolFailureAnswerNowGuardResult,
+	buildTurnLengthAnswerNowGuardResultForTest: buildTurnLengthAnswerNowGuardResult,
+	turnLengthToolsAreOffForTest: turnLengthToolsAreOff,
+	turnLengthFinalAnswerStreamArgsForTest: turnLengthFinalAnswerStreamArgs,
 	ensurePdfAbsenceReviewScopeForTest: ensurePdfAbsenceReviewScope,
 	setLearnerStateModeForTest: setLearnerStateMode,
 	buildHighlightTimeoutTabGuardResultForTest: buildHighlightTimeoutTabGuardResult,
@@ -12871,6 +12951,7 @@ function createTools(
 	guardCommand: (toolName: string, commandName: string, effectiveParams: Record<string, unknown>) => any | null = () => null,
 	runHighlightScanFallback: (effectiveParams: Record<string, unknown>, lastError: unknown) => Promise<any | null> = async () => null,
 	recordCompanionToolCall: (toolName: string, toolCallId: string, requestedArgs: unknown, effectiveArgs: unknown, result: unknown, isError: boolean) => void = () => {},
+	restoreMissingAnnotation: (effectiveParams: Record<string, unknown>) => Promise<any | null> = async () => null,
 ): AgentTool[] {
 	// A note passed with a highlight is added as soon as the highlight lands, in
 	// the same tool call: no extra model round trip for the annotationId, and no
@@ -12961,6 +13042,22 @@ function createTools(
 						},
 					};
 				};
+				// A highlight the model reuses can be gone from its page: a reload
+				// drops every mark, while the session still lists it. The session
+				// kept its text, so it is put back and scrolled to; when that is not
+				// possible the page's own miss stands.
+				const runScrollToAnnotation = async (requestedParams: any) => {
+					try {
+						return await runCommandWithParams(requestedParams);
+					} catch (error) {
+						if (!MISSING_ANNOTATION_ERROR_PATTERN.test(String((error as any)?.message || error))) throw error;
+						const effectiveParams = prepareCommandParams(requestedParams, commandName) as Record<string, unknown>;
+						if ((effectiveParams as any)?.__onhandUntrustedTabId != null) throw error;
+						const restored = await withToolCommandTimeout(name, HIGHLIGHT_TOOL_CALL_TIMEOUT_MS, () => restoreMissingAnnotation(effectiveParams)).catch(() => null);
+						if (!restored) throw error;
+						return restored;
+					}
+				};
 				let lastHighlightError: any = null;
 				const tryHighlightScanFallback = async (requestedParams: any, lastError: any) => {
 					if (commandName !== "highlight_text") return null;
@@ -13001,7 +13098,7 @@ function createTools(
 						if (commandName === "highlight_text" && (retryBudgetSpent(lastHighlightError) || shouldSkipOriginalHighlightAttempt((params as any)?.text, attemptedCandidateCount))) {
 							throw lastHighlightError || new Error(`No visible text matched: ${(params as any)?.text || ""}`);
 						}
-						result = await runCommandWithParams(params);
+						result = commandName === "scroll_to_annotation" ? await runScrollToAnnotation(params) : await runCommandWithParams(params);
 						if (commandName === "highlight_text") await rejectWeakApproximateLanding(result, params);
 					}
 				} catch (error) {
@@ -15793,6 +15890,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) ||
 					buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) ||
 					buildRepeatedToolFailureAnswerNowGuardResult(toolName, commandName, activeRequest) ||
+					buildTurnLengthAnswerNowGuardResult(toolName, commandName, activeRequest) ||
 					buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) ||
 					buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) ||
 					buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) ||
@@ -15833,6 +15931,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					});
 				},
 				(...call) => recordCompanionToolCall(session, ...call),
+				(effectiveParams) => restoreMissingSessionAnnotation(session, effectiveParams),
 			),
 			prompt,
 			attachments,
@@ -15871,6 +15970,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				const agentMessages = messagesOverride || activeAgent?.state.messages || [];
 				let finalError = activeRequest.aborted ? null : error || extractAssistantFailure(agentMessages);
 				let assistantText = activeRequest.reply.trim() || extractAssistantText(agentMessages).trim();
+				const toolsAreOff = turnLengthToolsAreOff(activeRequest);
 				if (finalError && !activeRequest.aborted && !activeRequest.transientProviderRetry && activeAgent && isTransientProviderError(finalError)) {
 					activeRequest.transientProviderRetry = true;
 					// Without the reset, the retry generation appends to the failed
@@ -15915,7 +16015,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 						finalError = null;
 					}
 				}
-				const missingToolTrace = !finalError && !activeRequest.aborted && !activeRequest.missingToolRetry
+				const missingToolTrace = !finalError && !activeRequest.aborted && !activeRequest.missingToolRetry && !toolsAreOff
 					? findMissingKnownBrowserToolTrace(activeRequest)
 					: null;
 				if (missingToolTrace && activeAgent) {
@@ -15973,7 +16073,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 						if (roundReadNoNewSource && activeRequest.preparationTiming) {
 							activeRequest.preparationTiming.learningEvidenceVerdicts = [...(activeRequest.preparationTiming.learningEvidenceVerdicts || []), "stopped: the last research round read no new source"];
 						}
-						if (activeAgent && !activeRequest.aborted && retryCount < retryLimit && !roundReadNoNewSource) {
+						if (activeAgent && !activeRequest.aborted && !toolsAreOff && retryCount < retryLimit && !roundReadNoNewSource) {
 							activeRequest.learningResearchPlanRetryCount = retryCount + 1;
 							activeRequest.learningResearchSourcesBeforeRound = sourcesRead;
 							resetAssistantDraftText(activeRequest);
@@ -16007,7 +16107,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				}
 				if (!finalError && !activeRequest.aborted && activeRequest.source !== "live-responses" && !activeRequest.learningResearchPlan?.requiresWorkspaceResearch && shouldRequireLearningWorkspaceEvidence(activeRequest)) {
 					const retryCount = Number(activeRequest.learningWorkspaceEvidenceRetryCount || 0);
-					if (activeAgent && retryCount < 2) {
+					if (activeAgent && retryCount < 2 && !toolsAreOff) {
 						activeRequest.learningWorkspaceEvidenceRetryCount = retryCount + 1;
 						resetAssistantDraftText(activeRequest);
 						blankSupersededAssistantDraft(requestId);
@@ -16019,7 +16119,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					}
 					assistantText = buildLearningWorkspaceEvidenceFallbackReply(activeRequest);
 				}
-				if (!finalError && !activeRequest.aborted && shouldRequireCitedSourceRetry(activeRequest) && activeAgent) {
+				if (!finalError && !activeRequest.aborted && !toolsAreOff && shouldRequireCitedSourceRetry(activeRequest) && activeAgent) {
 					activeRequest.citedSourceRetry = true;
 					resetAssistantDraftText(activeRequest);
 					blankSupersededAssistantDraft(requestId);
@@ -16029,7 +16129,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					}, activeRequest.abortController?.signal);
 					return;
 				}
-				if (!finalError && !activeRequest.aborted && shouldRequirePageSourceMarkerRetry(activeRequest, assistantText) && activeAgent) {
+				if (!finalError && !activeRequest.aborted && !toolsAreOff && shouldRequirePageSourceMarkerRetry(activeRequest, assistantText) && activeAgent) {
 					activeRequest.pageSourceMarkerRetry = true;
 					resetAssistantDraftText(activeRequest);
 					blankSupersededAssistantDraft(requestId);
@@ -16039,7 +16139,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					}, activeRequest.abortController?.signal);
 					return;
 				}
-				if (!finalError && !activeRequest.aborted && shouldRequirePdfAnchorRetry(activeRequest) && activeAgent) {
+				if (!finalError && !activeRequest.aborted && !toolsAreOff && shouldRequirePdfAnchorRetry(activeRequest) && activeAgent) {
 					activeRequest.pdfAnchorRetry = true;
 					resetAssistantDraftText(activeRequest);
 					blankSupersededAssistantDraft(requestId);
@@ -16332,7 +16432,12 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 						});
 						void publishState({
 							pageActions: [...activeRequest.pageActions],
-							status: guardrail.kind === "repeated_highlight_failure" ? "Answering without highlights..." : "Trying a different approach...",
+							status:
+								guardrail.kind === "repeated_highlight_failure"
+									? "Answering without highlights..."
+									: guardrail.kind === "turn_length_answer_now"
+										? "Wrapping up the answer..."
+										: "Trying a different approach...",
 						});
 						break;
 					}
@@ -17981,6 +18086,59 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 		return restored;
 	}
 
+	// Puts one saved highlight (and its note) back on the tab that is still
+	// showing its page, then scrolls to it. A reload or a return visit drops
+	// every mark while the session keeps listing them for reuse, so a follow-up
+	// used to ask for a mark that was no longer there (17 failed steps from 6
+	// installs in the week of 2026-11-13). Returns null when the id is not this
+	// session's, the tab shows another page, or the text is gone.
+	async function restoreMissingSessionAnnotation(session: RuntimeSession, params: any = {}) {
+		const staleAnnotationId = compactActionText(params?.annotationId);
+		if (!staleAnnotationId) return null;
+		const actions = collectSessionPageActions(session);
+		const source = actions.find(
+			(action) =>
+				isHighlightPageAction(action) &&
+				(compactActionText(action.annotationId) === staleAnnotationId ||
+					actionKeySuffix(action, "highlight:") === staleAnnotationId ||
+					(action.citationAnnotationIds || []).includes(staleAnnotationId)),
+		);
+		if (!source) return null;
+		const annotation = buildReplayAnnotationsFromPageActions(actions).find((candidate) => (candidate.actionKeys || []).includes(source.key));
+		if (!annotation?.matchedText) return null;
+		const state = await host.snapshotState();
+		const requestedTabId = Number(params?.tabId || 0);
+		const tab = requestedTabId > 0 ? flattenTabs(state).find((candidate: any) => candidate.id === requestedTabId) : pickActiveTab(state, typeof params?.windowId === "number" ? params.windowId : undefined);
+		// Only on the page the highlight was made on: the same words elsewhere
+		// are not the source the earlier answer pointed at.
+		if (!tab || !tabMatchesSavedTarget(tab, String(annotation.url || "").trim(), String(annotation.title || "").trim().toLowerCase())) return null;
+		const highlighted = await highlightTextWithReplayCandidates(tab.id, annotation.matchedText, {
+			scrollIntoView: false,
+			pdfAnchor: annotation.pdfAnchor,
+			anchor: annotation.anchor,
+			scanPage: true,
+			scanDeadline: Date.now() + HIGHLIGHT_SCAN_DEADLINE_MS,
+		});
+		const annotationId = compactActionText(highlighted?.annotation?.annotationId);
+		if (!annotationId) return null;
+		updateSessionReplayActionTargets(session, annotation, tab, highlighted.annotation);
+		// A mark that was already on the page under another id keeps its own note.
+		if (annotation.noteText && !highlighted.annotation.reusedExisting) {
+			try {
+				await host.runCommand("show_note", { tabId: tab.id, annotationId, note: annotation.noteText, label: annotation.noteLabel || "Onhand", scrollIntoView: false });
+			} catch (error) {
+				host.log?.("restored highlight note failed", error);
+			}
+		}
+		const scrolled = await host.runCommand("scroll_to_annotation", {
+			tabId: tab.id,
+			annotationId,
+			...(params?.block ? { block: params.block } : {}),
+			...(params?.target ? { target: params.target } : {}),
+		});
+		return { ...scrolled, restoredAnnotation: { previousAnnotationId: staleAnnotationId, annotationId } };
+	}
+
 	function restoredTargetToReplayAnnotation(target: any): ReplayAnnotation {
 		return {
 			key: "",
@@ -19019,6 +19177,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 								buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) ||
 								buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) ||
 								buildRepeatedToolFailureAnswerNowGuardResult(toolName, commandName, activeRequest) ||
+								buildTurnLengthAnswerNowGuardResult(toolName, commandName, activeRequest) ||
 								buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) ||
 								buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) ||
 								buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) ||
@@ -19059,6 +19218,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 								});
 							},
 							(...call) => recordCompanionToolCall(session, ...call),
+							(effectiveParams) => restoreMissingSessionAnnotation(session, effectiveParams),
 						),
 						prompt,
 						attachments,
@@ -19083,8 +19243,10 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 							if (activeRequest.modelCallCount === 1 && activeRequest.preparationTiming) {
 								activeRequest.preparationTiming.firstModelCallMs = Date.now() - preparationStartedAt;
 							}
-							return streamOnhandFast(streamModel, streamContext, {
-								...streamOptions,
+							const finalAnswer = turnLengthFinalAnswerStreamArgs(activeRequest, streamContext, streamOptions);
+							if (finalAnswer) void publishState({ status: "Wrapping up the answer..." });
+							return streamOnhandFast(streamModel, finalAnswer?.context || streamContext, {
+								...(finalAnswer?.options || streamOptions),
 								onhandTelemetry: {
 									turnId: requestId,
 									sessionId: session.id,
