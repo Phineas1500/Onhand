@@ -36,7 +36,7 @@ function harness({ submit, route, execute, commandState, decisionWaitMs } = {}) 
 async function check(name, run) { await run(); count++; console.log(`PASS ${name}`); }
 await check('session setup preserves backend independence and compact role-labelled history', () => {
   const config = api.sessionConfig({ turns: [{ userPrompt: 'Question', reply: 'Verified answer' }], preferences: { learningMode: true } });
-  assert.equal(config.model, 'gpt-live-1'); assert.deepEqual(config.delegation, { type: 'client' });
+  assert.equal(config.model, 'gpt-live-1.1'); assert.deepEqual(config.delegation, { type: 'client' });
   assert.equal(config.store, false); assert.equal(config.audio.output.voice, 'marin');
   assert.equal(config.input[1].content[0].type, 'output_text');
   assert.equal(config.tools, undefined); assert.equal(config.audio.input, undefined);

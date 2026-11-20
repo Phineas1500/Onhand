@@ -15848,7 +15848,7 @@ async function createLiveCallWithStoredApiKey(browserSdp, options = {}) {
 		throw new Error(`GPT-Live session setup failed: ${detail}`);
 	}
 	if (!result?.session?.id || !result?.transport?.sdp) throw new Error("Live returned no session ID or SDP answer.");
-	return { sessionId: result.session.id, sdp: result.transport.sdp, model: "gpt-live-1", delegation, nativeDecisionsError };
+	return { sessionId: result.session.id, sdp: result.transport.sdp, model: globalThis.OnhandLiveVoice.MODEL, delegation, nativeDecisionsError };
 }
 
 const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({

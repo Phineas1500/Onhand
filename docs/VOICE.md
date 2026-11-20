@@ -1,6 +1,6 @@
 # Voice
 
-Onhand's voice mode runs on GPT-Live 1 (`gpt-live-1`) over WebRTC from the side panel. Live holds the spoken conversation: it listens continuously, acknowledges briefly, takes interruptions and corrections, and speaks answers. Real work goes to Onhand's agent.
+Onhand's voice mode runs on GPT-Live 1.1 (`gpt-live-1.1`) over WebRTC from the side panel. Live holds the spoken conversation: it listens continuously, acknowledges briefly, takes interruptions and corrections, and speaks answers. Real work goes to Onhand's agent.
 
 The GPT-Realtime 2.1 engine and its separate voice tutor were removed on 2026-10-04. `REALTIME_VOICE.md` and `VOICE_ARCHITECTURE.md` describe that design and are kept for history; `GPT_LIVE_MIGRATION_PLAN.md` records the migration and its measurements.
 

@@ -1,7 +1,7 @@
 // Shared by the extension worker and sidebar. No audio is captured on import.
 // Protocol: https://developers.openai.com/api/docs/guides/live-delegation
 (() => {
-	const MODEL = "gpt-live-1";
+	const MODEL = "gpt-live-1.1";
 	const text = (value) => String(value ?? "");
 	const encoder = new TextEncoder();
 	// A UTF-8 byte bound is conservative for the API's 500-token append limit,

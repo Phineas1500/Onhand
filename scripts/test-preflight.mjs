@@ -150,7 +150,7 @@ async function main() {
 
 	const backgroundSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
 	const liveVoiceSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/live-voice.js"), "utf8");
-	const liveModel = "gpt-live-1";
+	const liveModel = "gpt-live-1.1";
 	// Live is the only voice engine; the retired Realtime call setup must stay gone.
 	const hasLiveVoiceOnly = liveVoiceSource.includes(`const MODEL = "${liveModel}";`) && !backgroundSource.includes("/v1/realtime/calls");
 	printCheck("Voice model", hasLiveVoiceOnly, liveModel);

@@ -152,7 +152,7 @@ For terminal-first session inspection, CLI-driven browser questions, and automat
 
 ## Voice
 
-The side panel's Voice button starts a GPT-Live 1 conversation. Live hands questions to the same Onhand agent as text chat, so voice uses the chosen text model, and speaks a short version of the cited answer that lands in the sidebar. Enable Voice in the Onhand options page and save an OpenAI platform API key; text chat can stay on OpenAI Codex sign-in. Details and the voice test tools (`npm run eval:voice`, `npm run eval:voice-call`) are in `docs/VOICE.md`.
+The side panel's Voice button starts a GPT-Live 1.1 conversation. Live hands questions to the same Onhand agent as text chat, so voice uses the chosen text model, and speaks a short version of the cited answer that lands in the sidebar. Enable Voice in the Onhand options page and save an OpenAI platform API key; text chat can stay on OpenAI Codex sign-in. Details and the voice test tools (`npm run eval:voice`, `npm run eval:voice-call`) are in `docs/VOICE.md`.
 
 ## Browser Runtime Tools
 

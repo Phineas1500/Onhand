@@ -48,7 +48,7 @@ const API_PROVIDERS = {
 		capabilities: { realtime: false, vision: false, tools: true, structuredOutput: false },
 	},
 };
-const VOICE_MODEL = "GPT-Live 1";
+const VOICE_MODEL = "GPT-Live 1.1";
 const VOICE_PRICE = "$0.05 per connected minute, plus model usage";
 const DIAGNOSTICS_OPTIONAL_HELP =
 	"Sends only the extension version, model category, event names, coarse errors, redacted crash reports and counts. Never prompts, page content, URLs, screenshots, saved sessions, transcripts or keys.";
