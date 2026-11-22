@@ -88237,6 +88237,7 @@ Default answer mode:
 - If the user asks what a page-wide list contains and the visible snapshot appears partial, call browser_extract_content once before answering. Do not replace missing list items with nearby headings or sections.
 - Chat should be brief and tied to the page context: one to three short paragraphs or compact structured chunks for ordinary questions. When an answer needs depth, use headings, bullets, or numbered steps so it remains readable in the sidebar. Do not use horizontal rules as separators. For broad teaching/review summaries, avoid display equations unless the user asks for formula details; explain the relationship in prose when extracted math is dense or fragile. Do not add a long "other topics" or method-roadmap list that is not covered by the source highlights; offer to expand instead. When annotations are created, describe what those highlights show instead of giving a detached page summary. When a chat point is supported by a highlight you made, reuse a short exact phrase from that highlight inside the point \u2014 do not paraphrase every anchored phrase away \u2014 so each sentence visibly connects to its mark. Also tag that point with the highlight's annotation id inline as [[cite:ANNOTATION_ID]], using the exact annotationId that browser_highlight_text returned for the mark that supports it; put the marker at the end of the sentence or bullet, and use one marker per supporting mark ([[cite:id1]][[cite:id2]]) when two marks back the same point. Cite every mark you place this turn: if a highlight's claim does not survive into the final answer, do not place that highlight \u2014 an uncited mark is clutter on the user's page. The reverse holds too: every sentence or bullet that states something from the page carries the chip of the mark that supports it \u2014 when several bullets rest on one mark, repeat that mark's chip on each \u2014 and a page point with no mark yet gets its supporting sentence highlighted before you answer, or is cut, or is labeled general knowledge. Only a lead-in line or a closing synthesis line may stand without a chip. Only cite a mark that genuinely supports that specific point: a mark from an earlier turn backs only a point drawn from that same earlier page, never a point about a source you opened this turn. Never invent an id \u2014 a wrong or missing marker just falls back to text matching, but a fabricated id points the reader at the wrong evidence. The marker is stripped before display, so it does not need to read naturally; it is the provenance link, separate from the exact-phrase echo, which you still include. Do not also write your own visible footnote numbers like [1] or [2] in the prose: the sidebar renders the reference number from the [[cite:...]] marker automatically, so a literal bracketed number would duplicate the chip.
 - If the current page does not contain or settle the answer, inspect clearly related open tabs before answering from your own knowledge, asking the user, or navigating elsewhere. Browser tab metadata is a workspace index: the captured workspace scan lists candidate tabs with their tabIds; read likely candidates by tabId in small batches, use browser_list_tabs for the complete inventory when the scan is insufficient, and expand until the evidence is sufficient or no plausible candidate remains. Do not read clearly unrelated tabs merely because they are open, and do not expose unrelated tab titles or details in the answer. Do not fabricate page support.
+- A page that points elsewhere for what the user asks about has not settled the answer: an assignment that says "from lecture" or "as in the notes", a problem that cites a chapter, a summary that defers to a paper. When an open tab is that material, or is a course page, module list, syllabus or folder that lists it, read it without being asked: open the listed notes or slides in a background tab and anchor the explanation there as well as on the current page. A tab the workspace scan marks as naming the same course or code as the active page is such a tab. The user should never have to name the notes when the notes, or the page that lists them, are already open. If nothing open leads to the material, answer from the current page and say in one short line that the material it refers to was not open.
 - If the user already asked for external sources, web search, Google, URLs, or to be taken to sources, do not ask again before navigating. Use browser_navigate with newTab true for a distinct destination URL, or activate/reuse an already-open matching tab, inspect the destination, and ground the answer on the destination page rather than the original page. Open a source only by an exact URL you have seen \u2014 in search results (reading a search page lists each result's link) or in a page's links \u2014 never by an article URL composed from memory or from a result's title or breadcrumb; those 404. To find sources, open a search page first.
 - If the user already asked to open or check relevant linked notes, readings, resources, articles, papers, or pages from the current page or a page used earlier in the session, do not keep only annotating the current page. If the current page is already a destination note, use browser_list_tabs to find the already-open course/index/master tab before asking the user for it; activate that tab, find or click the relevant links, open each distinct destination page once, inspect it, and place highlights/notes on the destination pages that support the answer.
 - For PDFs, keep the same user-facing flow as normal pages. For selected/highlighted PDF text, use exact selected text from browser_get_selection, copied selection, or captured context first. Chrome's native PDF viewer is usually supported through selection, clipboard, or debugger fallbacks; do not claim it blocks selection merely because a fallback failed. If tool output says the reader is Google Scholar PDF Reader, describe it as Google Scholar PDF Reader even when the top-level tab URL is a direct PDF URL. If Google Scholar Reader or another third-party PDF reader blocks selected text, open browser_open_pdf_in_onhand_viewer and ask the user to highlight the passage there only if selected text did not transfer. Recommend Chrome's default PDF viewer or the Onhand viewer for smoother selected-text questions in the future. Open browser_open_pdf_in_onhand_viewer whenever analysis, offscreen/deeper PDF reading, full-PDF search, durable PDF source markers, highlights, or notes would help; skip it only for quick one-sentence or yes/no selected-text answers when selected text is already available in a supported reader. For visual PDF questions about the current figure, slide, equation, diagram, screenshot, or visible page, capture the current PDF page image and answer in the sidebar first; do not automatically search/read/highlight/note just because the user says "try here" or asks what the visible figure shows. Add PDF highlights/notes for visual questions only when the user asks to mark/save/review it, asks where supporting evidence is, needs durable learning context, or the answer depends on a specific text passage. Do not treat a selected named concept, term, section heading, formula label, or paper mechanism as a quick selected-text answer: search/read the explanatory PDF section, jump to the best page when useful, highlight the strongest supporting passage, add one short note under 280 characters, then answer. When opening the viewer from another PDF reader, preserve the current selected text/page whenever available. If you use browser_pdf_search or browser_pdf_read_pages to answer from offscreen/deeper PDF pages, add a durable source highlight on the most important supporting passage with browser_highlight_text and a short browser_show_note under 280 characters unless the user asked for no page changes or this is only a quick visual explanation. If the user accepts an offer to go deeper in a PDF with "yes", "please", or similar, complete the offered search/read/jump/highlight/note workflow before answering. Never say you will highlight or add a note unless the corresponding tool call already succeeded. For Google Docs, browser_extract_content reads the document export, and browser_highlight_text can open the current Doc's PDF export in Onhand's viewer before highlighting; use that viewer only when annotation is needed instead of claiming the Docs editor itself is annotatable. For questions about offscreen PDF content, slides, or "where does it discuss..." use browser_pdf_search and browser_pdf_read_pages before answering; use browser_pdf_jump_to_page, browser_highlight_text, and browser_show_note to mark important supporting passages. Use browser_pdf_capture_page_image for visual slide/equation/figure grounding when text is insufficient. If the viewer reports the PDF is a scanned image without extractable text, say so plainly, ground the answer from captured page images, and when a durable mark is warranted place a region mark: browser_highlight_text with a short descriptive label as the text and pdfAnchor { pageNumber, regionRect } in 0-1 page fractions from the captured image. Region marks are only for scanned pages; pages with extractable text must anchor to exact quotes.
@@ -89327,6 +89328,8 @@ function classifyToolFailureTrace(trace, context = {}) {
   if (/no tab with id|tab (was )?closed|tab not found|invalid tab/.test(text)) return "tab";
   if (/receiving end does not exist|could not establish connection|frame (was )?removed|context invalidated|no frame/.test(text)) return "unreachable";
   if (/cannot access|cannot be scripted|chrome:\/\/|chrome-extension:\/\/|restricted|permission|not allowed/.test(text)) return "restricted";
+  if (/link has stopped working|link did not return a pdf/.test(text)) return "expired_link";
+  if (/did not open a page: the browser saves it|download link rather than a page/.test(text)) return "download";
   if (/navigat|page (changed|reloaded)|back\/forward cache/.test(text)) return "page_changed";
   if (/failed to fetch|network|net::|\b(403|404|429|500|502|503)\b/.test(text)) return "network";
   if (/web page, not a pdf|could not determine a pdf url/.test(text)) return "not_pdf";
@@ -91456,6 +91459,216 @@ ${candidates}` : "",
     assistantText ? `Superseded draft; preserve only claims that the inspected sources support:
 ${truncateStructuredText(assistantText, 2600)}` : ""
   ].filter(Boolean).join("\n\n");
+}
+var REFERRED_MATERIAL_PATTERN = /\b(?:from|in|during|per|see|using|recall(?:\s+from)?|refer\s+to|(?:as\s+)?(?:shown|covered|discussed|defined|described|presented|derived|introduced|given|seen|done|taught)\s+in)\s+(?:the\s+|our\s+|your\s+|this\s+week(?:'|’)s\s+)?(?:lectures?|class(?!\s+of\b)|(?:course|lecture|class)\s+(?:notes|slides)|notes|slides|textbook|readings?)\b/gi;
+var REFERRED_MATERIAL_HOLD_LIMIT = 8;
+var REFERRED_MATERIAL_ASK_WORDS = /* @__PURE__ */ new Set([
+  "explain",
+  "explains",
+  "describe",
+  "summarize",
+  "summarise",
+  "show",
+  "tell",
+  "give",
+  "walk",
+  "through",
+  "what",
+  "whats",
+  "which",
+  "does",
+  "this",
+  "that",
+  "these",
+  "those",
+  "mean",
+  "means",
+  "meaning",
+  "work",
+  "works",
+  "please",
+  "understand",
+  "question",
+  "problem",
+  "part",
+  "page",
+  "here",
+  "with",
+  "have",
+  "need",
+  "want",
+  "like",
+  "more",
+  "detail",
+  "details",
+  "simple",
+  "simply",
+  "terms",
+  "example",
+  "when",
+  "where",
+  "homework",
+  "assignment",
+  "lecture",
+  "lectures",
+  "slides",
+  "textbook",
+  "reading",
+  "course",
+  "using",
+  "used"
+]);
+function referredMaterialPageText(request2) {
+  const parts = [String(request2?.openTabSummary?.activePageText || "")];
+  for (const trace of Array.isArray(request2?.toolTraces) ? request2.toolTraces : []) {
+    if (trace?.state !== "complete" || !LEARNING_WORKSPACE_EVIDENCE_TOOL_NAMES.has(String(trace?.toolName || ""))) continue;
+    if (traceUsesNonInitialSource(request2, trace)) continue;
+    parts.push(String(trace.resultSummary || ""));
+  }
+  return parts.join("\n").slice(0, 8e4);
+}
+function referredMaterialPromptTerms(prompt) {
+  return [...openTabRelevanceTokens(ownWordsPromptText(prompt))].filter((term) => term.length >= 4 && !REFERRED_MATERIAL_ASK_WORDS.has(term));
+}
+function pagePointsToOtherMaterial(pageText, prompt, attachments = []) {
+  const terms = referredMaterialPromptTerms(prompt);
+  const problemHelp = promptLooksLikeLearningProblemRequest(prompt, attachments);
+  if (!terms.length && !problemHelp) return false;
+  for (const match2 of pageText.matchAll(REFERRED_MATERIAL_PATTERN)) {
+    if (problemHelp) return true;
+    const index = match2.index || 0;
+    const around = pageText.slice(Math.max(0, index - 240), index + match2[0].length + 240).toLowerCase();
+    if (terms.some((term) => around.includes(term))) return true;
+  }
+  return false;
+}
+var REFERRED_MATERIAL_TITLE_PATTERN = /\b(?:lectures?|lec|notes|slides|chapter|textbook|handout|readings?)\b/i;
+function isCourseSiteUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return /^https?:$/.test(url.protocol) && /\/(?:courses?|class(?:es)?|d2l\/(?:home|le))\/[^/]+/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+var REFERRED_MATERIAL_PDF_READ_TOOL_NAMES = /* @__PURE__ */ new Set(["browser_search_linked_pdf_corpus", "browser_pdf_search", "browser_pdf_read_pages", "browser_textbook_search"]);
+var COLLAPSED_LINKS_LIST_MARKER = "Links inside collapsed sections of this page";
+function referredMaterialReads(request2, promptTerms = [], topical = promptTerms.length > 0) {
+  const listingTabIds = /* @__PURE__ */ new Set();
+  let material = false;
+  for (const trace of Array.isArray(request2?.toolTraces) ? request2.toolTraces : []) {
+    const name = String(trace?.toolName || "");
+    if (trace?.state !== "complete" || !LEARNING_WORKSPACE_EVIDENCE_TOOL_NAMES.has(name)) continue;
+    if (!traceUsesNonInitialSource(request2, trace)) continue;
+    if (REFERRED_MATERIAL_PDF_READ_TOOL_NAMES.has(name)) {
+      material = true;
+      continue;
+    }
+    const [text, list] = String(trace.resultSummary || "").split(COLLAPSED_LINKS_LIST_MARKER);
+    const lower = text.toLowerCase();
+    const listsIt = topical ? !promptTerms.some((term) => lower.includes(term)) : list !== void 0;
+    if (listsIt) listingTabIds.add(traceTargetTabId(trace));
+    else material = true;
+  }
+  return { material, listingTabIds: [...listingTabIds].filter((id) => id > 0) };
+}
+function referredMaterialCandidateTabIds(request2, pageText, promptTerms = []) {
+  const initialTabId = Number(request2?.initialActiveTab?.id || 0);
+  const codes = openTabReferenceCodes(`${request2?.initialActiveTab?.title || ""}
+${pageText}`);
+  const tabs = (Array.isArray(request2?.openTabSummary?.workspaceTabs) ? request2.openTabSummary.workspaceTabs : []).filter(
+    (tab) => Number(tab?.id || 0) > 0 && Number(tab.id) !== initialTabId
+  );
+  const sourceUrl = (tab) => onhandPdfViewerSourceUrl(String(tab?.url || "")) || String(tab?.url || "");
+  const sitePart = (tab) => {
+    try {
+      const url = new URL(sourceUrl(tab));
+      const folders = url.pathname.split("/").filter(Boolean);
+      return /^https?:$/.test(url.protocol) && folders.length >= 2 ? `${url.host}/${folders[0]}/${folders[1]}` : "";
+    } catch {
+      return "";
+    }
+  };
+  const isPdf = (tab) => isOnhandPdfViewerUrl(String(tab?.url || "")) || /\.pdf(?:$|[?#])/i.test(sourceUrl(tab));
+  const coded = tabs.filter((tab) => [...openTabReferenceCodes(tab.title)].some((code) => codes.has(code)));
+  const courseParts = new Set(coded.map(sitePart).filter(Boolean));
+  const named = (tab) => {
+    const title = String(tab?.title || "").toLowerCase();
+    return promptTerms.some((term) => term.length >= 5 && title.includes(term));
+  };
+  const otherCourse = (tab) => {
+    const tabCodes = openTabReferenceCodes(tab.title);
+    return codes.size > 0 && tabCodes.size > 0 && ![...tabCodes].some((code) => codes.has(code));
+  };
+  const groups = [
+    coded,
+    tabs.filter((tab) => courseParts.has(sitePart(tab))),
+    tabs.filter(named),
+    tabs.filter((tab) => isPdf(tab) && REFERRED_MATERIAL_TITLE_PATTERN.test(String(tab?.title || ""))),
+    courseParts.size ? [] : tabs.filter((tab) => isCourseSiteUrl(sourceUrl(tab)) && !otherCourse(tab))
+  ];
+  return [...new Set(groups.flat().map((tab) => Number(tab.id)))].slice(0, 6);
+}
+function buildReferredMaterialFirstGuardResult(toolName2, commandName, prompt, request2) {
+  if (commandName !== "highlight_text") return null;
+  if (!request2 || request2.aborted) return null;
+  const traces = Array.isArray(request2.toolTraces) ? request2.toolTraces : [];
+  const held = traces.filter((trace) => (trace?.resultDetails?.guardrail?.kind || trace?.details?.guardrail?.kind) === "referred_material_first").length;
+  const round = Number(request2.modelCallCount || 0);
+  if (held && (held >= REFERRED_MATERIAL_HOLD_LIMIT || request2.referredMaterialHeldInRound !== round)) return null;
+  const promptTerms = referredMaterialPromptTerms(request2.displayPrompt ?? prompt);
+  const problemHelp = promptLooksLikeLearningProblemRequest(request2.displayPrompt ?? prompt, request2.attachments);
+  const reads = referredMaterialReads(request2, promptTerms, promptTerms.length > 0 && !problemHelp);
+  if (reads.material) return null;
+  const pageText = referredMaterialPageText(request2);
+  if (!pagePointsToOtherMaterial(pageText, request2.displayPrompt ?? prompt, request2.attachments)) return null;
+  const tabIds = referredMaterialCandidateTabIds(request2, pageText, promptTerms);
+  if (!tabIds.length) return null;
+  request2.referredMaterialHeldInRound = round;
+  if (held) {
+    return {
+      guardrail: {
+        kind: "referred_material_first",
+        blockedTool: toolName2,
+        blockedCommand: commandName,
+        message: "Held with the other marks on this page: read the open course material first, as the first held call says."
+      }
+    };
+  }
+  const tabList = (ids) => ids.map((id) => `tabId ${id}`).join(", ");
+  const listed = reads.listingTabIds.filter((id) => tabIds.includes(id));
+  if (listed.length) {
+    const unread = tabIds.filter((id) => !listed.includes(id));
+    return {
+      guardrail: {
+        kind: "referred_material_first",
+        blockedTool: toolName2,
+        blockedCommand: commandName,
+        message: [
+          "This page points to its course material (lecture, notes, slides or textbook) for what the user asked about, so it has not settled the answer.",
+          `${tabList(listed)} ${listed.length === 1 ? "has" : "have"} been read, but a course page, module list or folder only lists the material: it is not the notes.`,
+          "Before marking this page, open the notes or slides for this topic from the links in that read (links inside collapsed sections are listed after the page text; read the page again if the list is not there) with browser_open_pdf_in_onhand_viewer (pdfUrl, newTab true, active false), then search or read them with browser_pdf_search or browser_pdf_read_pages.",
+          ...unread.length ? [`Other open tabs that may hold the material: ${tabList(unread)}.`] : [],
+          "Then explain from that material: highlight and note the passage there that explains it, and keep one mark on this page where it points to the material.",
+          "If no link leads to notes that cover this, carry on with this page and say in one short line that the open course material did not cover it. Do not ask the user which notes to use."
+        ].join(" ")
+      }
+    };
+  }
+  return {
+    guardrail: {
+      kind: "referred_material_first",
+      blockedTool: toolName2,
+      blockedCommand: commandName,
+      message: [
+        "This page points to its course material (lecture, notes, slides or textbook) for what the user asked about, so it has not settled the answer, and that material looks to be open already.",
+        `Before marking this page, read ${tabIds.length === 1 ? `tabId ${tabIds[0]}` : `these tabs, most likely first: ${tabIds.map((id) => `tabId ${id}`).join(", ")}`} (browser_extract_content or browser_get_visible_text for a web page, browser_pdf_search or browser_pdf_read_pages for a PDF in Onhand's viewer).`,
+        "If a tab is a course page, module list or folder, find the notes or slides for this topic among its links and open them with browser_open_pdf_in_onhand_viewer (pdfUrl, newTab true, active false).",
+        "Then explain from that material: highlight and note the passage there that explains it, and keep one mark on this page where it points to the material.",
+        "If the material turns out not to cover this, carry on with this page and say in one short line that the open course material did not cover it. Do not ask the user which notes to use."
+      ].join(" ")
+    }
+  };
 }
 function buildLearningWorkspaceEvidenceFallbackReply(request2) {
   return [
@@ -93888,6 +94101,15 @@ function openTabRelevanceTokens(value) {
     String(value || "").toLowerCase().match(/[a-z][a-z0-9]{2,}/g)?.filter((token) => !OPEN_TAB_RELEVANCE_STOP_WORDS.has(token)) || []
   );
 }
+var OPEN_TAB_SHARED_CODE_SCORE = 30;
+var OPEN_TAB_CODE_NOT_A_NAME = /^(?:JAN|FEB|MAR|MARCH|APR|APRIL|MAY|JUN|JUNE|JUL|JULY|AUG|SEP|SEPT|OCT|NOV|DEC|FALL|SPRING|SUMMER|WINTER|AUTUMN|FY|AY|SY|PAGE|PAGES|ROOM|SUITE|BOX|HTTP|ERROR|CODE|ISBN|ISSN|DOI)$/;
+function openTabReferenceCodes(value) {
+  const codes = /* @__PURE__ */ new Set();
+  for (const match2 of String(value || "").matchAll(/(?<![A-Za-z0-9])([A-Z]{2,6})[ \u00a0-]?(\d{3,5}[A-Z]?)(?![A-Za-z0-9])/g)) {
+    if (!OPEN_TAB_CODE_NOT_A_NAME.test(match2[1])) codes.add(`${match2[1]} ${match2[2]}`);
+  }
+  return codes;
+}
 function openTabUrlParts(value) {
   try {
     const parsed = new URL(String(value || ""));
@@ -93899,9 +94121,12 @@ function openTabUrlParts(value) {
     return { host: "", firstPathSegment: "" };
   }
 }
-function rankOpenTabCandidates(state2, activeTab, prompt = "") {
+function rankOpenTabCandidates(state2, activeTab, prompt = "", activeText = "") {
   const targetWindowId = activeTab?.windowId;
   const promptTokens = openTabRelevanceTokens(prompt);
+  const activeCodes = openTabReferenceCodes(`${activeTab?.title || ""}
+${activeText}`);
+  const sharedCodeOf = (tab) => tab?.id === activeTab?.id ? "" : [...openTabReferenceCodes(tab?.title)].find((code) => activeCodes.has(code)) || "";
   const activeTokens = openTabRelevanceTokens(`${activeTab?.title || ""} ${activeTab?.url || ""}`);
   const activeUrl = openTabUrlParts(activeTab?.url);
   return flattenTabs(state2).filter((tab) => {
@@ -93920,6 +94145,7 @@ function rankOpenTabCandidates(state2, activeTab, prompt = "") {
       if (targetWindowId != null && tab.windowId === targetWindowId) score += 6;
       if (activeUrl.host && tabUrl.host === activeUrl.host) score += 12;
       if (activeUrl.firstPathSegment && tabUrl.host === activeUrl.host && tabUrl.firstPathSegment === activeUrl.firstPathSegment) score += 8;
+      if (sharedCodeOf(tab)) score += OPEN_TAB_SHARED_CODE_SCORE;
       return score;
     })()
   })).sort(
@@ -93931,16 +94157,21 @@ function rankOpenTabCandidates(state2, activeTab, prompt = "") {
     discarded: Boolean(tab.discarded),
     title: tab.title || "(untitled)",
     url: tab.url || "",
-    relevanceScore: Number(tab.relevanceScore || 0)
+    relevanceScore: Number(tab.relevanceScore || 0),
+    ...sharedCodeOf(tab) ? { sharedCode: sharedCodeOf(tab) } : {}
   }));
 }
-function summarizeOpenTabs(state2, activeTab, prompt = "", limit3 = OPEN_TAB_CONTEXT_LIMIT) {
-  const rankedTabs = rankOpenTabCandidates(state2, activeTab, prompt);
+function summarizeOpenTabs(state2, activeTab, prompt = "", limit3 = OPEN_TAB_CONTEXT_LIMIT, activeText = "") {
+  const rankedTabs = rankOpenTabCandidates(state2, activeTab, prompt, activeText);
   const compactLimit = Math.max(1, Number(limit3) || OPEN_TAB_CONTEXT_LIMIT);
   return {
     totalCount: rankedTabs.length,
     shownTabs: rankedTabs.slice(0, compactLimit),
-    omittedCount: Math.max(0, rankedTabs.length - compactLimit)
+    omittedCount: Math.max(0, rankedTabs.length - compactLimit),
+    // For the turn itself: a PDF in the browser's own viewer has no text
+    // until it is read, so which tabs belong to its course is only known then.
+    workspaceTabs: rankedTabs.filter((tab) => tab.id !== activeTab?.id).slice(0, 40).map((tab) => ({ id: tab.id, title: tab.title, url: tab.url })),
+    activePageText: String(activeText || "").slice(0, 9e3)
   };
 }
 function extractReadableContentText(extracted) {
@@ -94034,7 +94265,9 @@ async function renderBrowserContextDetails(host, options = {}) {
     }
     const selectionText = getSelectionText(selection?.selection);
     const workspaceQuery = [options.prompt || "", selectionText].filter(Boolean).join("\n");
-    const openTabSummary = summarizeOpenTabs(state2, activeTab, workspaceQuery);
+    const visibleText = formatVisibleTextForModel(visible?.visible || visible, BROWSER_CONTEXT_MAX_CHARS);
+    const activePageText = [selectionText, visibleText, extractReadableContentText(extracted)].filter(Boolean).join("\n");
+    const openTabSummary = summarizeOpenTabs(state2, activeTab, workspaceQuery, OPEN_TAB_CONTEXT_LIMIT, activePageText);
     const lines = [];
     if (activeTab) {
       lines.push(`Active tab title: ${activeTab.title || "(untitled)"}`);
@@ -94047,7 +94280,8 @@ async function renderBrowserContextDetails(host, options = {}) {
       for (const tab of openTabSummary.shownTabs) {
         const prefix = tab.active ? "* " : "- ";
         const stateLabel = tab.discarded ? " [discarded; metadata available]" : "";
-        lines.push(`${prefix}${tab.title || "(untitled)"}${tab.url ? ` - ${tab.url}` : ""} [tabId ${tab.id}]${stateLabel}`);
+        const sharedLabel = tab.sharedCode ? ` [names ${tab.sharedCode}, as the active page does]` : "";
+        lines.push(`${prefix}${tab.title || "(untitled)"}${tab.url ? ` - ${tab.url}` : ""} [tabId ${tab.id}]${stateLabel}${sharedLabel}`);
       }
       if (openTabSummary.omittedCount > 0) {
         lines.push(
@@ -94059,7 +94293,6 @@ async function renderBrowserContextDetails(host, options = {}) {
     if (selectionText) {
       lines.push(`Selected text${selectionSourceLabel ? ` (${selectionSourceLabel})` : ""}: ${JSON.stringify(truncate2(selectionText, 800))}`);
     }
-    const visibleText = formatVisibleTextForModel(visible?.visible || visible, BROWSER_CONTEXT_MAX_CHARS);
     if (visibleText) {
       lines.push("Visible text snapshot:");
       lines.push(visibleText);
@@ -95027,6 +95260,39 @@ function formatSearchResultLinksForModel(results) {
 Search result links (open a source with browser_navigate on one of these exact URLs; never type a guessed URL):
 ${lines.join("\n")}`;
 }
+var COLLAPSED_LINKS_MAX_CHARS = 9e3;
+function formatCollapsedSectionLinksForModel(found) {
+  const sections = (Array.isArray(found?.sections) ? found.sections : []).filter((section) => Array.isArray(section?.links) && section.links.length);
+  if (!sections.length) return "";
+  const lines = [];
+  let used = 0;
+  let dropped = Math.max(0, Number(found?.omitted) || 0);
+  for (const section of sections) {
+    const title = `${truncate2(String(section.title || "(unnamed section)"), 80)}:`;
+    let titled = false;
+    for (const link of section.links) {
+      const line = `- ${truncate2(String(link?.text || ""), 140)} \u2014 ${String(link?.url || "")}`;
+      if (!link?.url || used + line.length > COLLAPSED_LINKS_MAX_CHARS) {
+        dropped += 1;
+        continue;
+      }
+      if (!titled) {
+        lines.push(title);
+        titled = true;
+      }
+      lines.push(line);
+      used += line.length + 1;
+    }
+  }
+  if (!lines.length) return "";
+  return [
+    `
+
+${COLLAPSED_LINKS_LIST_MARKER} (the reader has not expanded them, so they are not in the text above and cannot be highlighted here). Open one by its exact address: a link named for a file (notes, slides, a .pdf) with browser_open_pdf_in_onhand_viewer (pdfUrl, newTab true, active false), even when its address does not end in .pdf; any other page with browser_navigate (newTab true, active false).`,
+    ...lines,
+    ...dropped ? [`(${dropped} more links are not listed.)`] : []
+  ].join("\n");
+}
 function toolResultTextForModelRaw(toolName2, result) {
   const details = result?.details || result || {};
   const tab = details.tab || null;
@@ -95130,7 +95396,7 @@ ${candidates.join("\n\n") || "No evidence slots were supplied."}`;
       const visible = details.visible || {};
       const text = formatVisibleTextForModel(visible, VISIBLE_TEXT_TOOL_MAX_CHARS);
       const heading = `Visible text from ${formatCompactTab(tab || visible)}:`;
-      const links = formatSearchResultLinksForModel(visible.searchResults);
+      const links = `${formatSearchResultLinksForModel(visible.searchResults)}${formatCollapsedSectionLinksForModel(visible.collapsedLinks)}`;
       return text ? `${heading}
 ${text}${links}` : `${heading}
 (No visible text returned.)${links}`;
@@ -95175,7 +95441,7 @@ ${truncateStructuredText(outlineText, 12e3)}
       const frameSource = content.source === "debugger-frame-readable-content" ? `Source frame: ${[content.frameTitle || content.title, content.contextOrigin || content.frameUrl].filter(Boolean).join(" \xB7 ")}.
 ` : "";
       const page = pageReadableExcerptForModel(content, text, startBlock);
-      const links = startBlock > 0 ? "" : formatSearchResultLinksForModel(content.searchResults);
+      const links = startBlock > 0 ? "" : `${formatSearchResultLinksForModel(content.searchResults)}${formatCollapsedSectionLinksForModel(content.collapsedLinks)}`;
       if (!page.text) {
         return startBlock > 0 && content.pagingSupported ? `${heading}
 ${frameSource}(No readable content after block ${startBlock}: this is the end of the page.)` : `${heading}
@@ -96562,6 +96828,8 @@ var __browserRuntimeTest = {
   relaxedRestorableUrlMatchKeyForTest: relaxedRestorableUrlMatchKey,
   restorablePageUrlsMatchRelaxedForTest: restorablePageUrlsMatchRelaxed,
   rankOpenTabCandidatesForTest: rankOpenTabCandidates,
+  buildReferredMaterialFirstGuardResultForTest: buildReferredMaterialFirstGuardResult,
+  isCourseSiteUrlForTest: isCourseSiteUrl,
   summarizeOpenTabsForTest: summarizeOpenTabs,
   shouldRequireLearningWorkspaceEvidenceForTest: shouldRequireLearningWorkspaceEvidence,
   buildLearningWorkspaceEvidenceRetryPromptForTest: buildLearningWorkspaceEvidenceRetryPrompt,
@@ -98289,7 +98557,9 @@ function createOnhandBrowserRuntime(host) {
     const message = compactTelemetryValue(error2?.message || error2, 240).toLowerCase();
     if (!message) return "";
     if (/already (?:responding|processing)|use steer\(\)|followup\(\)|wait for (?:completion|the current (?:reply|onhand operation))/.test(message)) return "busy";
-    if (/api key|sign in|oauth|credential|auth/.test(message)) return "auth";
+    const cause = message.replace(/(?:switch to|use) your own api key(?: in options)?/g, "").replace(/authenticated browser tab/g, "browser tab");
+    if (/could not reach|could not load the pdf|non-pdf response|file host (?:answered|sent)/.test(cause)) return "network";
+    if (/api key|sign in|oauth|credential|auth/.test(cause)) return "auth";
     if (/quota|limit|rate|429|free tier/.test(message)) return "quota";
     if (/network|fetch|connection|offline|reach/.test(message)) return "network";
     if (/model|provider|upstream|openrouter|openai|anthropic|gemini/.test(message)) return "provider";
@@ -98315,9 +98585,9 @@ function createOnhandBrowserRuntime(host) {
       return /source not found|saved source text is not currently loaded|no annotation found|no visible text matched/.test(message);
     }
     if (/^sidebar:(?:realtime-)?browser-tool$/.test(messageType)) {
-      return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no (?:visible|readable) (?:pdf )?text matched|on the page but hidden|no image or figure matched|requires (?:a )?non-empty|web page, not a pdf/.test(message);
+      return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no (?:visible|readable) (?:pdf )?text matched|on the page but hidden|no image or figure matched|requires (?:a )?non-empty|web page, not a pdf|did not open a page|download link rather than a page/.test(message);
     }
-    if (messageType === "pdf-viewer:load-authorized-source" && /\(http (?:404|410)\)/.test(message)) return true;
+    if (messageType === "pdf-viewer:load-authorized-source" && /\(http (?:404|410)\)|link has stopped working|link did not return a pdf/.test(message)) return true;
     return false;
   }
   function redactDiagnosticText(value, maxLength = 1200) {
@@ -99687,7 +99957,7 @@ function createOnhandBrowserRuntime(host) {
           learningMode ? "learning" : "answer"
         ),
         (toolName2, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName2, toolCallId, effectiveParams),
-        (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildNoPageChangesGuardResult(toolName2, commandName, prompt) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedToolFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildTurnLengthAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
+        (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildNoPageChangesGuardResult(toolName2, commandName, prompt) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedToolFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildTurnLengthAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildReferredMaterialFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
         async (effectiveParams) => {
           if (!effectiveParams?.scanPage) return null;
           const text = compactActionText(effectiveParams?.text);
@@ -102592,7 +102862,7 @@ Mark and answer from this text. Call browser_extract_content again only to conti
                 learningMode ? "learning" : "answer"
               ),
               (toolName2, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName2, toolCallId, effectiveParams),
-              (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildNoPageChangesGuardResult(toolName2, commandName, prompt) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedToolFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildTurnLengthAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
+              (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildNoPageChangesGuardResult(toolName2, commandName, prompt) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedToolFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildTurnLengthAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildReferredMaterialFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
               async (effectiveParams) => {
                 if (!effectiveParams?.scanPage) return null;
                 const text = compactActionText(effectiveParams?.text);

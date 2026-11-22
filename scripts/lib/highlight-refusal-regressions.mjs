@@ -30,12 +30,33 @@ export async function runHighlightRefusalRegressions({ installChromeStorageStub 
 		"open_pdf_in_onhand_viewer:not_pdf*1",
 	);
 	assert.equal(reasons([failed("browser_open_pdf_in_onhand_viewer", "Could not determine a PDF URL for the Onhand viewer. Open a direct PDF tab.")]), "open_pdf_in_onhand_viewer:not_pdf*1");
+	// A PDF tool aimed at a web page (a course site's file page).
+	assert.equal(reasons([failed("browser_pdf_search", "That tab is a web page, not a PDF in Onhand's viewer, so the PDF tools have nothing to read there. Read it with the page tools. If it links to a PDF file, open that link with browser_open_pdf_in_onhand_viewer (pdfUrl) and use the tab id it returns.")]), "pdf_search:not_pdf*1");
 	assert.equal(reasons([failed("browser_pdf_read_pages", "No PDF page text returned.")]), "pdf_read_pages:pdf_load*1");
 	assert.equal(reasons([failed("browser_open_pdf_in_onhand_viewer", "Onhand PDF viewer failed to load the PDF: Invalid PDF structure.")]), "open_pdf_in_onhand_viewer:pdf_load*1");
 	assert.equal(
 		reasons([failed("browser_open_pdf_in_onhand_viewer", "Onhand PDF viewer failed to load the PDF: Unexpected server response (403).")]),
 		"open_pdf_in_onhand_viewer:network*1",
 		"a refused download stays a network failure",
+	);
+	// A download link that expired, with no copy of the file left to open.
+	assert.equal(
+		reasons([failed("browser_open_pdf_in_onhand_viewer", "Onhand PDF viewer failed to load the PDF: This PDF's link has stopped working (the file host answered HTTP 403) and the browser kept no copy Onhand could use. Download links often expire: open the PDF again from the page that links to it, then ask again.")]),
+		"open_pdf_in_onhand_viewer:expired_link*1",
+	);
+	assert.equal(
+		reasons([failed("browser_open_pdf_in_onhand_viewer", "Onhand PDF viewer failed to load the PDF: This link did not return a PDF (the file host answered HTTP 403). Download links often expire: reload the page that links to it and open the PDF from there.")]),
+		"open_pdf_in_onhand_viewer:expired_link*1",
+	);
+	// An address the browser saved as a file (a course site's "Download" link):
+	// not a page to read, and not a PDF the viewer could open.
+	assert.equal(
+		reasons([failed("browser_navigate", "That address did not open a page: the browser saves it as a file (it is most likely in the reader's Downloads now), so there is nothing to read in a tab. If the file is a PDF, open the address with browser_open_pdf_in_onhand_viewer (pdfUrl). Otherwise tell the reader the file was downloaded.")]),
+		"navigate:download*1",
+	);
+	assert.equal(
+		reasons([failed("browser_open_pdf_in_onhand_viewer", "Onhand PDF viewer failed to load the PDF: Invalid PDF structure. This address is a download link rather than a page, so there is no tab to read it from either.")]),
+		"open_pdf_in_onhand_viewer:download*1",
 	);
 	// The page scan's message means the quote is nowhere on the page: a miss.
 	assert.equal(highlightReason("Saved source text is not currently loaded in this page: a private sentence", { pdf: true }), "highlight_text:no_match_pdf*1");

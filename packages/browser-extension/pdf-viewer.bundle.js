@@ -25097,6 +25097,8 @@ var PAGE_TEXT_READS_AT_ONCE = 8;
 var TOOLKIT_QUIET_MS = 400;
 var PDF_LOAD_TIMEOUT_MS = 2e4;
 var CREDENTIALED_PDF_LOAD_RETRY_TIMEOUT_MS = 12e3;
+var PDF_FETCHING_FROM_SITE_ATTRIBUTE = "data-onhand-pdf-fetching-from-site";
+var PDF_SLOW_SITE_NOTICE_MS = 5e3;
 var PDF_VIEWER_ANNOTATION_THEME = "light";
 var viewer = document.getElementById("viewer");
 var titleElement = document.getElementById("onhand-pdf-title");
@@ -26278,16 +26280,7 @@ function scorePdfNoteCandidate(candidate, textRects, anchorRect, noteRects = [])
   const anchorDistance = Math.abs(candidate.left - anchorRect.left) + Math.abs(candidate.top - anchorRect.top);
   return textOverlap * 800 + anchorOverlap * 1600 + noteOverlap * 6e3 + anchorDistance + candidate.order * 4;
 }
-function collectOtherPdfNoteRects(note, page, pageRect) {
-  const overlay = page.querySelector(".onhand-pdf-annotation-layer");
-  if (!overlay) return [];
-  return Array.from(overlay.querySelectorAll("[data-onhand-pdf-note]")).filter((element) => element !== note).map((element) => {
-    const rect = element.getBoundingClientRect();
-    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
-    return toPageRect(rect, page, pageRect);
-  }).filter((rect) => Boolean(rect));
-}
-function choosePdfNotePosition(page, pageRect, anchorRect, noteWidth, noteHeight, noteRects = []) {
+function choosePdfNotePosition(page, pageRect, anchorRect, noteWidth, noteHeight, noteRects = [], accept = null, textRects = getPdfTextRects(page, pageRect)) {
   const { width: pageWidth, height: pageHeight } = getPageLayoutSize(page, pageRect);
   const margin = Math.max(12, Math.min(20, pageWidth * 0.025));
   const gap = Math.max(10, Math.min(18, pageHeight * 0.018));
@@ -26330,8 +26323,8 @@ function choosePdfNotePosition(page, pageRect, anchorRect, noteWidth, noteHeight
     height: noteHeight,
     order
   }));
-  const textRects = getPdfTextRects(page, pageRect);
   return candidates.reduce((best, candidate) => {
+    if (accept && !accept(candidate)) return best;
     const score = scorePdfNoteCandidate(candidate, textRects, anchorRect, noteRects);
     return !best || score < best.score ? { ...candidate, score } : best;
   }, null);
@@ -26342,6 +26335,7 @@ function setPdfNoteCollapsed(note, collapsed) {
   const toggle = note.querySelector("[data-onhand-note-toggle]");
   note.setAttribute("data-onhand-note-collapsed", collapsed ? "true" : "false");
   if (!collapsed) note.removeAttribute(PDF_NOTE_FOLDED_ATTRIBUTE);
+  else note.removeAttribute(PDF_NOTE_READER_OPENED_ATTRIBUTE);
   if (body) body.hidden = collapsed;
   if (label) label.hidden = collapsed;
   if (toggle) {
@@ -26519,9 +26513,11 @@ function applyPdfNoteCardStyles(note, page, pageRect) {
 }
 var PDF_NOTE_FOLDED_ATTRIBUTE = "data-onhand-note-folded";
 var PDF_NOTE_OPENED_ATTRIBUTE = "data-onhand-note-opened";
+var PDF_NOTE_READER_OPENED_ATTRIBUTE = "data-onhand-note-reader-opened";
 var PDF_NOTE_TAB_SIZE = 30;
 var PDF_NOTE_TAB_INSET = 6;
 var PDF_NOTE_TAB_GAP = 4;
+var PDF_NOTE_CLEAR_TEXT_FRACTION = 0.15;
 var pdfNoteOpenSequence = 0;
 function markPdfNoteOpened(note) {
   pdfNoteOpenSequence += 1;
@@ -26538,33 +26534,54 @@ function layoutPdfInPageNotes(page, pageRect, open) {
     return { note, annotation, anchor: annotation ? toPageRect(annotation.getBoundingClientRect(), page, pageRect) : null };
   }).sort((a, b) => (a.anchor?.top ?? Infinity) - (b.anchor?.top ?? Infinity));
   const openedAt = (note) => Number(note.getAttribute(PDF_NOTE_OPENED_ATTRIBUTE) || 0);
-  const keep = open && isOpen(open) ? open : entries.map((entry) => entry.note).filter(isOpen).sort((a, b) => openedAt(b) - openedAt(a))[0] || null;
-  const nextTabTop = { left: 0, right: 0 };
-  for (const { note, anchor } of entries) {
-    if (note === keep) continue;
-    if (isOpen(note)) {
+  const tabSide = (anchor) => !anchor || anchor.left <= pageWidth - anchor.right ? "left" : "right";
+  const tabLeft = (side) => side === "left" ? PDF_NOTE_TAB_INSET : pageWidth - PDF_NOTE_TAB_SIZE - PDF_NOTE_TAB_INSET;
+  const tabTop = (anchor, least = 0) => Math.max(0, Math.min(pageHeight - PDF_NOTE_TAB_SIZE, Math.max(anchor?.top ?? 0, least)));
+  const cards = entries.filter((entry) => isOpen(entry.note)).sort((a, b) => Number(b.note === open) - Number(a.note === open) || openedAt(b.note) - openedAt(a.note));
+  const textRects = cards.some((entry) => entry.anchor) ? getPdfTextRects(page, pageRect) : [];
+  const placed = [];
+  for (const entry of cards) {
+    const { note, anchor } = entry;
+    if (!anchor) continue;
+    const always = placed.length === 0;
+    setImportantStyle(note, "left", "0px");
+    const measuredRect = note.getBoundingClientRect();
+    const width = Math.max(220, Math.min(360, note.offsetWidth || measuredRect.width || 360));
+    const height = Math.max(76, note.offsetHeight || measuredRect.height || 96);
+    const cardAt = (spot2) => ({ left: spot2.left, top: spot2.top, right: spot2.left + width, bottom: spot2.top + height, width, height });
+    const tabSlots = entries.filter((other) => other !== entry).map((other) => {
+      const left = tabLeft(tabSide(other.anchor));
+      const top = tabTop(other.anchor);
+      return { left, top, right: left + PDF_NOTE_TAB_SIZE, bottom: top + PDF_NOTE_TAB_SIZE, width: PDF_NOTE_TAB_SIZE, height: PDF_NOTE_TAB_SIZE };
+    });
+    const readerOpened = note.hasAttribute(PDF_NOTE_READER_OPENED_ATTRIBUTE);
+    const fits = (spot2) => {
+      const card = cardAt(spot2);
+      if (placed.some((rect) => rectOverlapArea(card, rect) > 0)) return false;
+      if (readerOpened) return true;
+      const covered = textRects.reduce((sum, rect) => sum + rectOverlapArea(card, rect), 0);
+      return covered / Math.max(1, width * height) <= PDF_NOTE_CLEAR_TEXT_FRACTION;
+    };
+    const spot = choosePdfNotePosition(page, pageRect, anchor, width, Math.min(240, height), [...placed, ...tabSlots], always ? null : fits, textRects);
+    if (!spot) {
+      if (always) continue;
       setPdfNoteCollapsed(note, true);
       note.setAttribute(PDF_NOTE_FOLDED_ATTRIBUTE, "true");
+      continue;
     }
+    setImportantStyle(note, "left", `${spot.left}px`);
+    setImportantStyle(note, "top", `${spot.top}px`);
+    placed.push(cardAt(spot));
+  }
+  const nextTabTop = { left: 0, right: 0 };
+  for (const { note, anchor } of entries) {
+    if (isOpen(note)) continue;
     if (note.hasAttribute(PDF_NOTE_FOLDED_ATTRIBUTE)) setImportantStyle(note, "opacity", "0.9");
-    const anchorRect = anchor || { left: 0, right: 0, top: 0 };
-    const side = anchorRect.left <= pageWidth - anchorRect.right ? "left" : "right";
-    const top = Math.max(0, Math.min(pageHeight - PDF_NOTE_TAB_SIZE, Math.max(anchorRect.top, nextTabTop[side])));
-    const left = side === "left" ? PDF_NOTE_TAB_INSET : pageWidth - PDF_NOTE_TAB_SIZE - PDF_NOTE_TAB_INSET;
-    setImportantStyle(note, "left", `${left}px`);
+    const side = tabSide(anchor);
+    const top = tabTop(anchor, nextTabTop[side]);
+    setImportantStyle(note, "left", `${tabLeft(side)}px`);
     setImportantStyle(note, "top", `${top}px`);
     nextTabTop[side] = top + PDF_NOTE_TAB_SIZE + PDF_NOTE_TAB_GAP;
-  }
-  const kept = entries.find((entry) => entry.note === keep);
-  if (!kept?.anchor) return;
-  const measuredRect = kept.note.getBoundingClientRect();
-  const noteHeight = Math.max(76, Math.min(240, measuredRect.height || kept.note.offsetHeight || 96));
-  const noteWidth = Math.max(220, Math.min(360, measuredRect.width || 360));
-  const otherNoteRects = collectOtherPdfNoteRects(kept.note, page, pageRect);
-  const positioned = choosePdfNotePosition(page, pageRect, kept.anchor, noteWidth, noteHeight, otherNoteRects);
-  if (positioned) {
-    setImportantStyle(kept.note, "left", `${positioned.left}px`);
-    setImportantStyle(kept.note, "top", `${positioned.top}px`);
   }
 }
 function expandPdfNoteForAnnotation(annotationId) {
@@ -26573,6 +26590,8 @@ function expandPdfNoteForAnnotation(annotationId) {
   setPdfNoteCollapsed(note, false);
   markPdfNoteOpened(note);
   const page = note.closest(".page[data-page-number]");
+  const beside = page ? Array.from(page.querySelectorAll('.onhand-pdf-annotation-layer [data-onhand-pdf-note]:not([data-onhand-note-collapsed="true"])')) : [];
+  for (const card of [note, ...beside]) card.setAttribute(PDF_NOTE_READER_OPENED_ATTRIBUTE, "true");
   if (page) refreshPdfNotePositions([page], note);
   return note;
 }
@@ -27518,6 +27537,7 @@ async function runViewerCommand(data) {
       error: document.querySelector(".onhand-pdf-error")?.textContent || "",
       statusText: document.querySelector("#onhand-pdf-status")?.textContent || "",
       pageCountText: document.querySelector("#onhand-pdf-page-count")?.textContent || "",
+      fetchingFromSite: document.body?.getAttribute(PDF_FETCHING_FROM_SITE_ATTRIBUTE) === "true",
       pageNumber: Number.parseInt(pageInput?.value || "1", 10) || 1,
       sourceUrl
     };
@@ -27804,9 +27824,14 @@ async function loadPdfDocumentFromUrl(value) {
     } catch (credentialError) {
       setStatus("Retrying through the authenticated browser tab...");
       let browserLoad = null;
+      document.body?.setAttribute(PDF_FETCHING_FROM_SITE_ATTRIBUTE, "true");
+      const slowNotice = setTimeout(() => setStatus("The site is still preparing this PDF..."), PDF_SLOW_SITE_NOTICE_MS);
       try {
         browserLoad = await chrome.runtime.sendMessage({ type: "pdf-viewer:load-authorized-source", url: value });
       } catch {
+      } finally {
+        clearTimeout(slowNotice);
+        document.body?.removeAttribute(PDF_FETCHING_FROM_SITE_ATTRIBUTE);
       }
       if (!browserLoad?.ok || !browserLoad?.dataBase64) {
         throw new Error(
@@ -27895,6 +27920,14 @@ function sourceTitle(url) {
   } catch {
     return "PDF";
   }
+}
+function documentNameForTitle(urlTitle, metadata) {
+  if (/\.pdf$/i.test(urlTitle)) return "";
+  for (const value of [metadata?.contentDispositionFilename, metadata?.info?.Title]) {
+    const name = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+    if (name && name.length <= 200 && name !== urlTitle) return name;
+  }
+  return "";
 }
 function updatePageFromScroll() {
   const bestPage = findViewportPage();
@@ -28369,6 +28402,16 @@ async function loadPdf() {
   setStatus("Loading PDF...");
   pdfDocument = await loadPdfDocumentFromUrl(sourceUrl);
   cachedPdfTextLayerInfo = null;
+  if (!/\.pdf$/i.test(title)) {
+    const loaded = pdfDocument;
+    void Promise.resolve().then(() => loaded.getMetadata()).then((metadata) => {
+      const name = documentNameForTitle(title, metadata);
+      if (!name || loaded !== pdfDocument) return;
+      document.title = `${name} - Onhand PDF Viewer`;
+      titleElement.textContent = name;
+    }).catch(() => {
+    });
+  }
   const pageCount = Number(pdfDocument.numPages || 0);
   const explicitInitialPageNumber = parseInitialPageNumber(pageCount);
   const initialPageNumber = explicitInitialPageNumber || pageNumberFromScrollRatio(parseInitialScrollRatio(), pageCount) || 1;

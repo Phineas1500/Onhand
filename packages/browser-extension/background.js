@@ -595,8 +595,17 @@ const ONHAND_PDF_VIEWER_CREDENTIAL_GRANT_TTL_MS = 2 * 60 * 1000;
 const ONHAND_PDF_VIEWER_CREDENTIAL_AUTH_STORAGE_KEY = "onhand:pdf-viewer-credential-auth";
 const pendingOnhandPdfViewerCredentialGrants = new Map();
 const ONHAND_AUTHENTICATED_PDF_MAX_BYTES = 24 * 1024 * 1024;
-const ONHAND_AUTHENTICATED_PDF_LOAD_TIMEOUT_MS = 10000;
+// How long the reader's own tab may take to hand over a PDF it is signed in
+// for. Some sites build the file afresh for every request and let the browser
+// keep no copy: a Gradescope graded copy (no-store, 5.8 MB) sent its first
+// byte after 10.7 s, and at 10 s the viewer gave up on a PDF the tab was showing.
+const ONHAND_AUTHENTICATED_PDF_LOAD_TIMEOUT_MS = 45000;
+// While the viewer says the file is still coming from its site, whoever
+// waits for the viewer waits this long before calling it failed.
+const ONHAND_PDF_VIEWER_SLOW_SITE_READY_TIMEOUT_MS = 70000;
+const ONHAND_PDF_VIEWER_FETCHING_FROM_SITE_ATTRIBUTE = "data-onhand-pdf-fetching-from-site";
 const ONHAND_AUTHENTICATED_PDF_STREAM_CHUNK_BYTES = 4 * 1024 * 1024;
+const ONHAND_SAVED_PDF_COPY_STEP_TIMEOUT_MS = 4000;
 
 function isHttpsUrl(value) {
 	try {
@@ -727,23 +736,174 @@ async function loadAuthorizedPdfBytesFromTab(sender, pdfUrl) {
 		throw new Error("The authenticated PDF retry no longer matches the source tab.");
 	}
 
-	let bytes;
-	try {
-		bytes = await loadPdfBytesThroughTabDebugger(tabId, pdfUrl);
-	} catch (error) {
-		// Chrome refuses a debugger on a tab that holds another extension's
-		// frame (a PDF reader or a password manager laid over the page). The
-		// page can still ask for its own file, signed in as the reader is.
-		if (!isRestrictedScriptingError(error) || !isHttpLikeUrl(tab.url)) throw error;
-		bytes = await loadPdfBytesFromTabDocument(tabId, pdfUrl);
-	}
-	if (!bytes.byteLength || !looksLikePdfBytes(bytes)) {
-		throw new Error("The authenticated browser tab returned a non-PDF response.");
+	// Onhand's viewer laid over the PDF's own tab, rather than a viewer tab.
+	const overPdfTab = isHttpLikeUrl(tab.url) && !isOnhandPdfViewerLikeUrl(tab.url);
+	// A download link from a course site (a signed Gradescope link, a Canvas
+	// file link) stops working after a while, though the tab still shows the
+	// PDF: every new request is refused, and the reader saw "could not load
+	// the PDF (HTTP 403)" over a PDF they had been reading. The browser kept
+	// the file it loaded, so that copy is tried before the file host is asked
+	// again, and once more, another way, after the file host refuses.
+	const saved = overPdfTab ? await loadSavedPdfCopyFromTabDocument(tabId, pdfUrl) : { bytes: null, documentType: "" };
+	let bytes = saved.bytes;
+	if (!bytes) {
+		try {
+			try {
+				bytes = await loadPdfBytesThroughTabDebugger(tabId, pdfUrl);
+			} catch (error) {
+				// Chrome refuses a debugger on a tab that holds another extension's
+				// frame (a PDF reader or a password manager laid over the page). The
+				// page can still ask for its own file, signed in as the reader is.
+				if (!isRestrictedScriptingError(error) || !isHttpLikeUrl(tab.url)) throw error;
+				bytes = await loadPdfBytesFromTabDocument(tabId, pdfUrl);
+			}
+			if (!bytes.byteLength || !looksLikePdfBytes(bytes)) {
+				throw new Error("The authenticated browser tab returned a non-PDF response.");
+			}
+		} catch (error) {
+			if (!overPdfTab || !isRefusedPdfLoadError(error)) throw error;
+			// Only a tab that is showing the PDF has a copy worth looking for.
+			const showsPdf = !saved.documentType || saved.documentType === "application/pdf";
+			bytes = showsPdf ? await loadSavedPdfCopyThroughSpareTab(tab, pdfUrl) : null;
+			if (!bytes) throw new Error(refusedPdfLinkMessage(error, showsPdf));
+		}
 	}
 	return {
 		dataBase64: encodeBytesAsBase64(bytes),
 		byteLength: bytes.byteLength,
 	};
+}
+
+// The file host answered, and the answer was a refusal or not the PDF.
+function isRefusedPdfLoadError(error) {
+	return /could not load the PDF \(HTTP \d{3}\)|returned a non-PDF response/.test(String(error?.message || error));
+}
+
+const REFUSED_PDF_LINK_MESSAGE_START = "This PDF's link has stopped working";
+
+function refusedPdfLinkMessage(error, showsPdf) {
+	const status = /\(HTTP (\d{3})\)/.exec(String(error?.message || error))?.[1];
+	const answer = status ? `the file host answered HTTP ${status}` : "the file host sent something other than the PDF";
+	return showsPdf
+		? `${REFUSED_PDF_LINK_MESSAGE_START} (${answer}) and the browser kept no copy Onhand could use. Download links often expire: open the PDF again from the page that links to it, then ask again.`
+		: `This link did not return a PDF (${answer}). Download links often expire: reload the page that links to it and open the PDF from there.`;
+}
+
+// The copy the browser kept when the tab loaded this file, read by the tab's
+// own document without a request leaving the browser. This reaches the copy
+// of a PDF opened from its own site, a bookmark or a typed address. Never
+// throws: no bytes when there is no such copy or the tab can't be scripted.
+async function loadSavedPdfCopyFromTabDocument(tabId, pdfUrl) {
+	try {
+		const loaded = await requestPdfFromTabDocument(tabId, pdfUrl, true);
+		const bytes = typeof loaded?.dataBase64 === "string" ? decodeBase64Bytes(loaded.dataBase64) : null;
+		return {
+			bytes: bytes?.byteLength && looksLikePdfBytes(bytes) ? bytes : null,
+			documentType: String(loaded?.documentType || "").toLowerCase(),
+		};
+	} catch {
+		return { bytes: null, documentType: "" };
+	}
+}
+
+// The copy of a PDF opened by a link on another site (the course page) is
+// filed by the browser where no request from the tab can reach it: only a
+// page load of the same kind gets it back. So that load is repeated in a
+// spare background tab and its answer read through the debugger before the
+// tab shows it. It is made as a step through the tab's history, which takes
+// a saved copy as it is: an ordinary load would ask the file host whether
+// an old copy is still good, be refused, and lose the copy. Returns null
+// when the browser has no copy.
+async function loadSavedPdfCopyThroughSpareTab(sourceTab, pdfUrl) {
+	if (!chrome.debugger) return null;
+	let spareTabId = null;
+	try {
+		const spare = await chrome.tabs.create({
+			url: "about:blank",
+			active: false,
+			windowId: typeof sourceTab?.windowId === "number" ? sourceTab.windowId : undefined,
+			index: typeof sourceTab?.index === "number" ? sourceTab.index + 1 : undefined,
+		});
+		spareTabId = spare.id;
+		return await withDebuggerTarget({ tabId: spareTabId }, async ({ target, send }) => {
+			const waiting = new Set();
+			const onEvent = (source, method, params) => {
+				if (source.tabId !== target.tabId) return;
+				for (const waiter of [...waiting]) {
+					if (waiter.method !== method) continue;
+					waiting.delete(waiter);
+					waiter.resolve(params);
+				}
+			};
+			const nextEvent = (method) => {
+				const waiter = { method, resolve: null };
+				const arrived = new Promise((resolve) => {
+					waiter.resolve = resolve;
+				});
+				waiting.add(waiter);
+				const event = withOperationTimeout(arrived, ONHAND_SAVED_PDF_COPY_STEP_TIMEOUT_MS, `Timed out waiting for ${method}.`);
+				// Awaited below; a step that fails first must not leave it unhandled.
+				event.catch(() => waiting.delete(waiter));
+				return event;
+			};
+			// "*" and "?" are wildcards in a debugger URL pattern.
+			const pattern = String(pdfUrl).replace(/[\\*?]/g, "\\$&");
+			debuggerApi.onEvent.addListener(onEvent);
+			try {
+				await send("Page.enable");
+				// Put the address into this tab's history without asking anyone
+				// for it. Refused here, the tab lands on an error page, which the
+				// browser asks for again when stepped back to, rather than
+				// restoring the page from memory.
+				await send("Fetch.enable", { patterns: [{ urlPattern: pattern, requestStage: "Request" }] });
+				let paused = nextEvent("Fetch.requestPaused");
+				await send("Runtime.evaluate", { expression: `location.assign(${JSON.stringify(String(pdfUrl))})` });
+				const refusedHere = await paused;
+				const landed = nextEvent("Page.frameNavigated");
+				await send("Fetch.failRequest", { requestId: refusedHere.requestId, errorReason: "Failed" });
+				await landed;
+				await send("Fetch.disable");
+				// Step back to the blank page and forward again, holding the answer.
+				await send("Fetch.enable", { patterns: [{ urlPattern: pattern, requestStage: "Response" }] });
+				const history = await send("Page.getNavigationHistory");
+				const entries = Array.isArray(history?.entries) ? history.entries : [];
+				const index = Number(history?.currentIndex);
+				if (!(index > 0) || !entries[index]) return null;
+				const left = nextEvent("Page.frameNavigated");
+				await send("Page.navigateToHistoryEntry", { entryId: entries[index - 1].id });
+				await left;
+				paused = nextEvent("Fetch.requestPaused");
+				// Answers only once the held request is let go.
+				send("Page.navigateToHistoryEntry", { entryId: entries[index].id }).catch(() => {});
+				const answer = await paused;
+				try {
+					if (answer.responseStatusCode !== 200) return null;
+					const taken = await send("Fetch.takeResponseBodyAsStream", { requestId: answer.requestId });
+					const bytes = await readDebuggerStream(send, taken.stream);
+					return bytes.byteLength && looksLikePdfBytes(bytes) ? bytes : null;
+				} finally {
+					// The spare tab never shows or downloads the file.
+					await send("Fetch.failRequest", { requestId: answer.requestId, errorReason: "Aborted" }).catch(() => {});
+				}
+			} finally {
+				debuggerApi.onEvent.removeListener(onEvent);
+			}
+		});
+	} catch (error) {
+		// A file past the size limit is said as such; anything else is no copy.
+		if (/browser-context limit/.test(String(error?.message || error))) throw error;
+		log("No saved PDF copy through a spare tab", error?.message || String(error));
+		return null;
+	} finally {
+		if (typeof spareTabId === "number") await chrome.tabs.remove(spareTabId).catch(() => {});
+	}
+}
+
+function decodeBase64Bytes(dataBase64) {
+	const binary = atob(dataBase64);
+	const bytes = new Uint8Array(binary.length);
+	for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+	return bytes;
 }
 
 async function loadPdfBytesThroughTabDebugger(tabId, pdfUrl) {
@@ -771,49 +931,58 @@ async function loadPdfBytesThroughTabDebugger(tabId, pdfUrl) {
 			);
 		}
 		return await readDebuggerStream(send, resource.stream);
-	});
+		// The wait for the site's first byte, then the read of the file.
+	}, ONHAND_AUTHENTICATED_PDF_LOAD_TIMEOUT_MS + 30000);
 }
 
 // The same request made by the tab's own document, for tabs the debugger
 // can't attach to. The tab is showing this address, so the request is to its
 // own site and carries the reader's sign-in.
 async function loadPdfBytesFromTabDocument(tabId, pdfUrl) {
-	const loaded = await withOperationTimeout(
-		executeScriptInTab(
-			tabId,
-			async (url, maxBytes) => {
-				try {
-					// The tab has usually just loaded this file, and a download link
-					// that works once would refuse a second request: take the copy
-					// the browser kept when it has one.
-					const response = await fetch(url, { credentials: "include", cache: "force-cache" });
-					if (!response.ok) return { error: `HTTP ${response.status}` };
-					const bytes = new Uint8Array(await response.arrayBuffer());
-					if (bytes.byteLength > maxBytes) return { tooLarge: true };
-					let binary = "";
-					for (let offset = 0; offset < bytes.byteLength; offset += 0x8000) {
-						binary += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.byteLength, offset + 0x8000)));
-					}
-					return { dataBase64: btoa(binary) };
-				} catch (error) {
-					return { error: String(error?.message || error) };
-				}
-			},
-			[pdfUrl, ONHAND_AUTHENTICATED_PDF_MAX_BYTES],
-		),
-		ONHAND_AUTHENTICATED_PDF_LOAD_TIMEOUT_MS,
-		"Timed out loading the PDF through its authenticated browser tab.",
-	);
+	const loaded = await requestPdfFromTabDocument(tabId, pdfUrl, false);
 	if (loaded?.tooLarge) {
 		throw new Error(`The protected PDF is larger than Onhand's ${Math.floor(ONHAND_AUTHENTICATED_PDF_MAX_BYTES / 1024 / 1024)} MB browser-context limit.`);
 	}
 	if (typeof loaded?.dataBase64 !== "string") {
 		throw new Error(`The authenticated browser tab could not load the PDF${loaded?.error ? ` (${loaded.error})` : ""}.`);
 	}
-	const binary = atob(loaded.dataBase64);
-	const bytes = new Uint8Array(binary.length);
-	for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-	return bytes;
+	return decodeBase64Bytes(loaded.dataBase64);
+}
+
+// The tab's own document asks for its file. With savedCopyOnly the browser
+// answers from the copy it kept or not at all; otherwise it prefers that copy
+// and asks the file host when it has none.
+async function requestPdfFromTabDocument(tabId, pdfUrl, savedCopyOnly) {
+	return await withOperationTimeout(
+		executeScriptInTab(
+			tabId,
+			async (url, maxBytes, savedOnly) => {
+				const documentType = String(document.contentType || "");
+				try {
+					// The tab has usually just loaded this file, and a download link
+					// that works once would refuse a second request: take the copy
+					// the browser kept when it has one.
+					const response = await fetch(
+						url,
+						savedOnly ? { credentials: "include", cache: "only-if-cached", mode: "same-origin" } : { credentials: "include", cache: "force-cache" },
+					);
+					if (!response.ok) return { documentType, error: `HTTP ${response.status}` };
+					const bytes = new Uint8Array(await response.arrayBuffer());
+					if (bytes.byteLength > maxBytes) return { documentType, tooLarge: true };
+					let binary = "";
+					for (let offset = 0; offset < bytes.byteLength; offset += 0x8000) {
+						binary += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.byteLength, offset + 0x8000)));
+					}
+					return { documentType, dataBase64: btoa(binary) };
+				} catch (error) {
+					return { documentType, error: String(error?.message || error) };
+				}
+			},
+			[pdfUrl, ONHAND_AUTHENTICATED_PDF_MAX_BYTES, savedCopyOnly === true],
+		),
+		ONHAND_AUTHENTICATED_PDF_LOAD_TIMEOUT_MS,
+		"Timed out loading the PDF through its authenticated browser tab.",
+	);
 }
 
 function grantOnhandPdfViewerFileSource(fileUrl) {
@@ -1331,6 +1500,19 @@ async function installInlineOnhandPdfViewer(tabId, pdfUrl, options = {}) {
 		},
 		[viewerUrl, pdfUrl],
 	);
+}
+
+// Takes Onhand's viewer off a PDF tab again, leaving the browser's own view
+// of the PDF as it was.
+async function removeInlineOnhandPdfViewer(tabId) {
+	return await executeScriptInTab(tabId, () => {
+		const root = document.getElementById("onhand-inline-pdf-viewer-root");
+		if (!root) return false;
+		root.remove();
+		document.documentElement.removeAttribute("data-onhand-inline-pdf-viewer");
+		if (document.body) document.body.style.overflow = "";
+		return true;
+	});
 }
 
 function stripUrlHash(value) {
@@ -4014,7 +4196,7 @@ async function attachDebuggerWithRetry(target) {
 	throw lastError;
 }
 
-async function withDebugger(tabId, fn) {
+async function withDebugger(tabId, fn, timeoutMs = TAB_COMMAND_TIMEOUT_MS) {
 	const previousTask = debuggerTaskChains.get(tabId) || Promise.resolve();
 	const scheduledTask = withOperationTimeout(
 		previousTask.catch(() => {}).then(async () => {
@@ -4038,7 +4220,7 @@ async function withDebugger(tabId, fn) {
 				} catch {}
 			}
 		}),
-		TAB_COMMAND_TIMEOUT_MS,
+		timeoutMs,
 		`Timed out waiting for debugger task on tab ${tabId}`,
 	);
 
@@ -4092,6 +4274,42 @@ async function withDebuggerTarget(target, fn) {
 	return await trackedTask;
 }
 
+// The browser freezes a tab that has sat in the background (it lets it run
+// for a moment about once a minute). A frozen tab answers no script: each read
+// waited out its limit before falling back to the debugger, some failed after
+// 15 s, and a course page the reader had open next to the homework came back
+// unread. The debugger wakes a tab in a few milliseconds; the browser freezes
+// it again once it has sat idle.
+const FROZEN_TAB_WAKE_TIMEOUT_MS = 1500;
+const FROZEN_TAB_WAKE_RETRY_MS = 60000;
+const frozenTabWakeFailures = new Map();
+
+async function wakeFrozenTab(tabId) {
+	if (typeof tabId !== "number" || !chrome.debugger) return false;
+	let tab = null;
+	try {
+		tab = await chrome.tabs.get(tabId);
+	} catch {
+		return false;
+	}
+	if (tab?.frozen !== true) return false;
+	// A tab the debugger may not attach to stays as it was: one try a minute.
+	if (Date.now() - (frozenTabWakeFailures.get(tabId) || 0) < FROZEN_TAB_WAKE_RETRY_MS) return false;
+	try {
+		await withOperationTimeout(
+			withDebugger(tabId, ({ send }) => send("Page.setWebLifecycleState", { state: "active" })),
+			FROZEN_TAB_WAKE_TIMEOUT_MS,
+			"Waking the tab timed out",
+		);
+		frozenTabWakeFailures.delete(tabId);
+		return true;
+	} catch {
+		if (frozenTabWakeFailures.size > 200) frozenTabWakeFailures.clear();
+		frozenTabWakeFailures.set(tabId, Date.now());
+		return false;
+	}
+}
+
 async function withTabCommand(tabId, fn, timeoutMs = TAB_COMMAND_TIMEOUT_MS) {
 	const enqueuedAt = Date.now();
 	const previousTask = tabCommandTaskChains.get(tabId) || Promise.resolve();
@@ -4104,7 +4322,7 @@ async function withTabCommand(tabId, fn, timeoutMs = TAB_COMMAND_TIMEOUT_MS) {
 				// wait separately to make the signature unmistakable.
 				const queueWaitMs = Date.now() - enqueuedAt;
 				if (queueWaitMs > 500) log("slow queue wait", `tab ${tabId}`, `${queueWaitMs}ms`);
-				return Promise.resolve().then(fn);
+				return wakeFrozenTab(tabId).then(() => fn());
 			}),
 		timeoutMs,
 		`Timed out waiting for page command on tab ${tabId}`,
@@ -11314,6 +11532,9 @@ async function executePageToolkitMethodViaGenericWebFrames(tabId, methodName, ar
 	});
 }
 
+const PDF_TOOL_ON_WEB_PAGE_MESSAGE =
+	"That tab is a web page, not a PDF in Onhand's viewer, so the PDF tools have nothing to read there. Read it with the page tools. If it links to a PDF file, open that link with browser_open_pdf_in_onhand_viewer (pdfUrl) and use the tab id it returns.";
+
 // PDF reading tools live in the Onhand viewer. On a PDF tab still showing the
 // browser's own viewer they failed ("toolkit.searchPdf is not a function", or
 // "No inline Onhand PDF viewer frame found"); in a Learning run the agent then
@@ -11324,7 +11545,11 @@ async function runPdfViewerToolkitMethod(tab, methodName, ...args) {
 		return await runPageToolkitMethod(tab.id, methodName, ...args);
 	} catch (error) {
 		const message = String(error?.message || "");
-		const missingViewer = message.includes(`${methodName} is not a function`) || /No (inline )?Onhand PDF viewer (runtime port|frame)/i.test(message);
+		const noSuchPageTool = message.includes(`${methodName} is not a function`);
+		const missingViewer = noSuchPageTool || /No (inline )?Onhand PDF viewer (runtime port|frame)/i.test(message);
+		// A PDF tool aimed at an ordinary page (a course site's file page, say)
+		// answered "TypeError: toolkit.searchPdf is not a function".
+		if (noSuchPageTool && !isLikelyPdfResourceUrl(tab.url)) throw new Error(PDF_TOOL_ON_WEB_PAGE_MESSAGE);
 		if (!missingViewer || !isLikelyPdfResourceUrl(tab.url)) throw error;
 		log("Mounting the Onhand PDF viewer for a PDF tool", methodName, tab.id);
 		await openPdfInOnhandViewer({ tabId: tab.id, active: false, newTab: false, disableSelectionHandoff: true });
@@ -11755,6 +11980,66 @@ async function waitForTabComplete(tabId, timeoutMs = 15000, options = {}) {
 	});
 }
 
+// Some addresses hand the browser a file to save instead of a page to show: a
+// Canvas "Download" link, a file host's attachment link. A tab sent to one
+// stays where it was (a tab opened for one closes itself), the file lands in
+// the reader's Downloads, and nothing in any tab is the PDF. Onhand reported
+// the page the tab was still on as the destination, or laid its PDF viewer
+// over the course page the link came from, where it could not load the file.
+
+// Addresses that say they download, so no tab has to be sent there to find out
+// (which would only put a copy of the file in the reader's Downloads).
+function isDownloadLinkUrl(value) {
+	try {
+		const url = new URL(String(value || ""));
+		if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+		if (/\/download\/?$/i.test(url.pathname)) return true;
+		for (const [key, raw] of url.searchParams) {
+			const name = key.toLowerCase();
+			const flag = String(raw).toLowerCase();
+			if (/^(?:download|download_frd|forcedownload|force_download|dl)$/.test(name) && /^(?:1|true|yes)$/.test(flag)) return true;
+			if (name === "export" && flag === "download") return true;
+			if (name === "response-content-disposition" && flag.startsWith("attachment")) return true;
+		}
+	} catch {}
+	return false;
+}
+
+// Which tabs' main frames commit a navigation while watched.
+function watchMainFrameCommits() {
+	const committed = new Set();
+	const onCommitted = (details) => {
+		if (details?.frameId === 0 && typeof details.tabId === "number") committed.add(details.tabId);
+	};
+	const event = chrome.webNavigation?.onCommitted;
+	event?.addListener?.(onCommitted);
+	return {
+		committed: (tabId) => committed.has(tabId),
+		stop: () => event?.removeListener?.(onCommitted),
+	};
+}
+
+// A tab sent from one address to another that has finished loading, committed
+// nothing and is still where it started was handed a file to save (or the
+// address was refused). A tab still loading, or one sent to the address it
+// already shows, says nothing either way.
+function tabWasHandedAFile(startUrl, destinationUrl, finalTab, committed) {
+	if (committed || !finalTab || finalTab.status !== "complete" || finalTab.pendingUrl) return false;
+	// A mail or app link leaves the tab where it was too, and saves nothing.
+	if (!isHttpLikeUrl(destinationUrl)) return false;
+	const start = stripUrlHash(String(startUrl || "about:blank"));
+	if (start === stripUrlHash(String(destinationUrl || ""))) return false;
+	return stripUrlHash(String(finalTab.url || "about:blank")) === start;
+}
+
+// A tab opened for an address the browser saves as a file closes itself.
+function isMissingTabError(error) {
+	return /no tab with id|tab (?:was )?closed|invalid tab id/i.test(String(error?.message || error || ""));
+}
+
+const SAVED_ADDRESS_MESSAGE =
+	"That address did not open a page: the browser saves it as a file (it is most likely in the reader's Downloads now), so there is nothing to read in a tab. If the file is a PDF, open the address with browser_open_pdf_in_onhand_viewer (pdfUrl). Otherwise tell the reader the file was downloaded.";
+
 // The viewer answers over its own runtime port in every browser. The debugger
 // is Chrome's way to a viewer page whose port has not connected; Firefox has
 // none, and asking through it alone sat out the whole timeout there.
@@ -11773,6 +12058,7 @@ async function readOnhandPdfViewerTabStatus(tabId, pdfUrl = "") {
 				error,
 				statusText: document.querySelector("#onhand-pdf-status")?.textContent || "",
 				pageCountText: document.querySelector("#onhand-pdf-page-count")?.textContent || "",
+				fetchingFromSite: document.body?.getAttribute("${ONHAND_PDF_VIEWER_FETCHING_FROM_SITE_ATTRIBUTE}") === "true",
 			};
 		})()`,
 		{ skipScripting: true },
@@ -11780,7 +12066,8 @@ async function readOnhandPdfViewerTabStatus(tabId, pdfUrl = "") {
 }
 
 async function waitForOnhandPdfViewerReady(tabId, timeoutMs = 15000, pdfUrl = "") {
-	const deadline = Date.now() + timeoutMs;
+	const startedAt = Date.now();
+	let deadline = startedAt + timeoutMs;
 	let lastError = null;
 	while (Date.now() < deadline) {
 		try {
@@ -11789,8 +12076,15 @@ async function waitForOnhandPdfViewerReady(tabId, timeoutMs = 15000, pdfUrl = ""
 			if (status?.error) {
 				throw new Error(`Onhand PDF viewer failed to load the PDF: ${status.error}`);
 			}
+			// The file is still coming from a site that is slow to send it.
+			if (status?.fetchingFromSite) deadline = Math.max(deadline, startedAt + ONHAND_PDF_VIEWER_SLOW_SITE_READY_TIMEOUT_MS);
 		} catch (error) {
 			lastError = error;
+			// The viewer has given up on a web PDF, and waiting changes nothing:
+			// the failure used to be reported only when the timeout ran out, by
+			// which time the tab command had timed out with a message of its own.
+			// A local file's viewer may still be asking the reader to choose it.
+			if (/^https?:/i.test(String(pdfUrl || "")) && /failed to load the PDF/.test(String(error?.message || ""))) throw error;
 		}
 		await delay(150);
 	}
@@ -11800,7 +12094,7 @@ async function waitForOnhandPdfViewerReady(tabId, timeoutMs = 15000, pdfUrl = ""
 const INLINE_VIEWER_PORT_GRACE_MS = 2000;
 
 async function waitForInlineOnhandPdfViewerReady(tabId, timeoutMs = 15000, pdfUrl = "") {
-	const deadline = Date.now() + timeoutMs;
+	let deadline = Date.now() + timeoutMs;
 	let lastError = null;
 	const statusCommand = { command: "status" };
 	const expression = `(() => {
@@ -11810,6 +12104,7 @@ async function waitForInlineOnhandPdfViewerReady(tabId, timeoutMs = 15000, pdfUr
 			error,
 			statusText: document.querySelector("#onhand-pdf-status")?.textContent || "",
 			pageCountText: document.querySelector("#onhand-pdf-page-count")?.textContent || "",
+			fetchingFromSite: document.body?.getAttribute("${ONHAND_PDF_VIEWER_FETCHING_FROM_SITE_ATTRIBUTE}") === "true",
 		};
 	})()`;
 	// Which status route answered, and what each attempt cost (diagnostics).
@@ -11834,6 +12129,8 @@ async function waitForInlineOnhandPdfViewerReady(tabId, timeoutMs = 15000, pdfUr
 			if (status?.error) {
 				throw new Error(`Onhand PDF viewer failed to load the PDF: ${status.error}`);
 			}
+			// The file is still coming from a site that is slow to send it.
+			if (status?.fetchingFromSite) deadline = Math.max(deadline, startedAt + ONHAND_PDF_VIEWER_SLOW_SITE_READY_TIMEOUT_MS);
 			// The port answered; the viewer is still rendering. Poll it again.
 			await delay(150);
 			continue;
@@ -11853,6 +12150,7 @@ async function waitForInlineOnhandPdfViewerReady(tabId, timeoutMs = 15000, pdfUr
 		try {
 			const status = await timed("bridge", () => callOnhandPdfViewerFrameViaBridge(tabId, statusCommand, "No Onhand PDF viewer frame context found", pdfUrl));
 			if (status?.ready) return readyResult(status, "bridge");
+			if (status?.fetchingFromSite) deadline = Math.max(deadline, startedAt + ONHAND_PDF_VIEWER_SLOW_SITE_READY_TIMEOUT_MS);
 			if (status?.error) {
 				throw new Error(`Onhand PDF viewer failed to load the PDF: ${status.error}`);
 			}
@@ -11860,6 +12158,7 @@ async function waitForInlineOnhandPdfViewerReady(tabId, timeoutMs = 15000, pdfUr
 			try {
 				const status = await timed("scripting", () => evaluateInOnhandPdfViewerFrameViaScripting(tabId, expression, "No Onhand PDF viewer frame context found"));
 				if (status?.ready) return readyResult(status, "scripting");
+				if (status?.fetchingFromSite) deadline = Math.max(deadline, startedAt + ONHAND_PDF_VIEWER_SLOW_SITE_READY_TIMEOUT_MS);
 				if (status?.error) {
 					throw new Error(`Onhand PDF viewer failed to load the PDF: ${status.error}`);
 				}
@@ -11872,6 +12171,7 @@ async function waitForInlineOnhandPdfViewerReady(tabId, timeoutMs = 15000, pdfUr
 						"No Onhand PDF viewer frame context found",
 					));
 					if (status?.ready) return readyResult(status, "matchingFrame");
+					if (status?.fetchingFromSite) deadline = Math.max(deadline, startedAt + ONHAND_PDF_VIEWER_SLOW_SITE_READY_TIMEOUT_MS);
 					if (status?.error) {
 						throw new Error(`Onhand PDF viewer failed to load the PDF: ${status.error}`);
 					}
@@ -12058,12 +12358,28 @@ async function navigateBrowser(args = {}) {
 				reusedExistingTab: true,
 			};
 		}
-		const createdTab = await chrome.tabs.create({
-			url: args.url,
-			active: args.active !== false,
-			windowId,
-		});
-		const finalTab = waitForLoad ? await waitForTabComplete(createdTab.id, timeoutMs) : await chrome.tabs.get(createdTab.id);
+		const savedAddress = { tab: null, sourceWindowId: windowId, createdNewTab: false, reusedExistingTab: false, savedAddress: true };
+		const commits = watchMainFrameCommits();
+		let finalTab;
+		try {
+			const createdTab = await chrome.tabs.create({
+				url: args.url,
+				active: args.active !== false,
+				windowId,
+			});
+			finalTab = await (waitForLoad ? waitForTabComplete(createdTab.id, timeoutMs) : chrome.tabs.get(createdTab.id)).catch((error) => {
+				// A tab opened for an address the browser saves closes itself.
+				if (!isMissingTabError(error)) throw error;
+				return null;
+			});
+		} finally {
+			commits.stop();
+		}
+		if (!finalTab) return savedAddress;
+		if (waitForLoad && tabWasHandedAFile("about:blank", args.url, finalTab, commits.committed(finalTab.id))) {
+			await chrome.tabs.remove(finalTab.id).catch(() => {});
+			return savedAddress;
+		}
 		return {
 			tab: finalTab,
 			createdNewTab: true,
@@ -12072,17 +12388,55 @@ async function navigateBrowser(args = {}) {
 	}
 
 	const targetTab = await resolveTargetTab(args);
-	const updatedTab = await chrome.tabs.update(targetTab.id, {
-		url: args.url,
-		active: args.active === true ? true : undefined,
-	});
-	const finalTab = waitForLoad
-		? await waitForTabComplete(updatedTab.id, timeoutMs, tabNavigationWait(targetTab, args.url))
-		: await chrome.tabs.get(updatedTab.id);
+	const commits = watchMainFrameCommits();
+	let finalTab;
+	try {
+		const updatedTab = await chrome.tabs.update(targetTab.id, {
+			url: args.url,
+			active: args.active === true ? true : undefined,
+		});
+		finalTab = waitForLoad
+			? await waitForTabComplete(updatedTab.id, timeoutMs, tabNavigationWait(targetTab, args.url))
+			: await chrome.tabs.get(updatedTab.id);
+	} finally {
+		commits.stop();
+	}
 	return {
 		tab: finalTab,
 		createdNewTab: false,
 		reusedExistingTab: false,
+		// The tab is still on the page it was sent from.
+		...(waitForLoad && tabWasHandedAFile(targetTab.url, args.url, finalTab, commits.committed(finalTab.id)) ? { savedAddress: true } : {}),
+	};
+}
+
+// A navigation the browser turned into a saved file. A PDF is opened in
+// Onhand's viewer, which asks for the file itself; anything else has nothing
+// to read, and the model is told so instead of being handed the old page.
+async function openSavedAddressAfterNavigation(args, navigation, knownPdf = false) {
+	const isPdf = knownPdf || isLikelyPdfResourceUrl(args.url) || (await probeAddressIsPdf(args.url)) === true;
+	if (!isPdf) throw new Error(SAVED_ADDRESS_MESSAGE);
+	// The viewer opens beside the tab that was to be navigated, or beside the
+	// active one when the address was to get a new tab.
+	const windowId = typeof navigation?.sourceWindowId === "number" ? navigation.sourceWindowId : args.windowId;
+	const sourceTab = navigation?.tab || (await resolveTargetTab(args.newTab ? (typeof windowId === "number" ? { windowId } : {}) : args));
+	const opened = await openPdfInOnhandViewer({
+		tabId: sourceTab.id,
+		pdfUrl: args.url,
+		savedAddress: true,
+		active: args.active,
+		timeoutMs: args.timeoutMs,
+		waitForLoad: args.waitForLoad,
+		disableSelectionHandoff: true,
+	});
+	return {
+		tab: opened.tab,
+		navigation: {
+			createdNewTab: opened.opened === true,
+			reusedExistingTab: opened.alreadyOpen === true,
+			savedAddress: true,
+			onhandPdfViewer: { opened: true },
+		},
 	};
 }
 
@@ -12168,6 +12522,11 @@ async function probeAddressIsPdf(url, timeoutMs = 3000) {
 // such a page loaded its HTML as a PDF ("Invalid PDF structure") and the
 // question went unanswered. Returns null for a real PDF, and whenever that
 // can't be ruled out; otherwise the PDF the page embeds, if it has one.
+//
+// A file page is the other kind (a course site's page about one file, with a
+// "Download" link and a preview): the link named "Notes.pdf" on a course page
+// leads there, not to the PDF. With no PDF in a frame, the page's one link
+// that downloads a PDF is the file it is about.
 async function describeWebPageAtPdfAddress(tab, pdfUrl) {
 	if (typeof tab?.id !== "number" || !isHttpLikeUrl(pdfUrl) || !isHttpLikeUrl(tab.url)) return null;
 	let page;
@@ -12193,7 +12552,19 @@ async function describeWebPageAtPdfAddress(tab, pdfUrl) {
 						});
 						if (frames.length >= 24) break;
 					}
+					const links = [];
+					for (const element of document.querySelectorAll("a[href]")) {
+						if (links.length >= 40) break;
+						const raw = element.getAttribute("href") || "";
+						const download = element.hasAttribute("download");
+						if (!download && !/download|[?&]dl=/i.test(raw)) continue;
+						try {
+							const parsed = new URL(raw, location.href);
+							if (/^https?:$/.test(parsed.protocol) && parsed.origin === location.origin) links.push({ url: parsed.href, download });
+						} catch {}
+					}
 					return {
+						links,
 						contentType: String(document.contentType || "").toLowerCase(),
 						// Onhand's own viewer, or the Scholar reader, already laid over a PDF.
 						reader: Boolean(
@@ -12217,12 +12588,41 @@ async function describeWebPageAtPdfAddress(tab, pdfUrl) {
 	const candidates = (Array.isArray(page.frames) ? page.frames : [])
 		.filter((frame) => stripUrlHash(frame.url) !== stripUrlHash(pdfUrl) && (frame.typed || isLikelyPdfResourceUrl(frame.url)))
 		.sort((left, right) => right.area - left.area);
-	return { embeddedPdfUrl: candidates[0]?.url || "" };
+	if (candidates[0]?.url) return { embeddedPdfUrl: candidates[0].url };
+	// Two different files to download is a list, not a page about one file.
+	const fileLinks = [
+		...new Set(
+			(Array.isArray(page.links) ? page.links : [])
+				.filter((link) => link?.download === true || isDownloadLinkUrl(link?.url))
+				.map((link) => stripUrlHash(link.url))
+				.filter((url) => url !== stripUrlHash(pdfUrl)),
+		),
+	];
+	const fileLink = fileLinks.length === 1 && (await probeAddressIsPdf(fileLinks[0])) === true ? fileLinks[0] : "";
+	return { embeddedPdfUrl: fileLink };
 }
 
 async function openPdfInOnhandViewer(args = {}) {
 	const sourceTab = await resolveTargetTab(args);
-	const pdfUrl = resolvePdfSourceUrlForViewer(args, sourceTab);
+	let pdfUrl;
+	try {
+		pdfUrl = resolvePdfSourceUrlForViewer(args, sourceTab);
+	} catch (error) {
+		// Asked to open a web page's tab, with no PDF named: a page about one
+		// file (its download link), or one that shows a PDF in a frame, has a
+		// PDF to open, beside the page.
+		const holds = args.pdfUrl || args.followedEmbeddedPdf === true ? null : await describeWebPageAtPdfAddress(sourceTab, stripUrlHash(sourceTab?.url || ""));
+		if (!holds?.embeddedPdfUrl) throw error;
+		log("Web page tab holds one PDF; opening it beside the page", sourceTab.id);
+		return await openPdfInOnhandViewer({
+			...args,
+			tabId: sourceTab.id,
+			pdfUrl: holds.embeddedPdfUrl,
+			newTab: true,
+			disableSelectionHandoff: true,
+			followedEmbeddedPdf: true,
+		});
+	}
 	if (pdfTabMatchesSource(sourceTab, pdfUrl) && !isOnhandPdfViewerLikeUrl(sourceTab.url)) {
 		const webPage = await describeWebPageAtPdfAddress(sourceTab, pdfUrl);
 		if (webPage) {
@@ -12268,7 +12668,10 @@ async function openPdfInOnhandViewer(args = {}) {
 	// not switched to holds no selection or reading position: skip the
 	// selection capture (~0.7 s) and page-location detectors (~1.2 s).
 	const freshBackgroundSource = args.freshBackgroundSource === true && sourceTab?.active === false;
-	if (!initialSelectionHandoff && args.disableSelectionHandoff !== true && !freshBackgroundSource) {
+	// Neither does the page a download link was on: the PDF is not in any tab.
+	const savedAddressOpen = isHttpLikeUrl(pdfUrl) && !pdfTabMatchesSource(sourceTab, pdfUrl) && (args.savedAddress === true || isDownloadLinkUrl(pdfUrl));
+	const noPdfInSourceTab = freshBackgroundSource || savedAddressOpen;
+	if (!initialSelectionHandoff && args.disableSelectionHandoff !== true && !noPdfInSourceTab) {
 		const selectionStartedAt = Date.now();
 		try {
 			initialSelectionHandoff = await withOperationTimeout(
@@ -12323,7 +12726,7 @@ async function openPdfInOnhandViewer(args = {}) {
 		? { pageNumber: initialSelectionHandoff.pageNumber, source: `${initialSelectionHandoff.source || "pdf-selection"}:selection` }
 		: providedSelectionPageNumber
 			? { pageNumber: providedSelectionPageNumber, source: "provided-selection-page" }
-		: freshBackgroundSource
+		: noPdfInSourceTab
 			? null
 		: await inferInitialPdfViewerPageLocation(args, sourceTab, pdfUrl, diagnostics);
 	const initialPageNumber = initialPageLocation?.pageNumber || null;
@@ -12372,7 +12775,7 @@ async function openPdfInOnhandViewer(args = {}) {
 	// probing a PDF tab that finished loading under half a second earlier put
 	// it back into a load that did not report complete for 15 s, so the mount
 	// after a background navigation waited out the tab-load timeout.
-	if (args.forceReload !== true && args.newlyOpenedTab !== true && !sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
+	if (!savedAddressOpen && args.forceReload !== true && args.newlyOpenedTab !== true && !sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
 		const existingStatus = await probeInlineOnhandPdfViewerStatus(sourceTab.id, pdfUrl);
 		if (existingStatus) {
 			const existingPageNumber = normalizePdfPageNumber(
@@ -12434,27 +12837,102 @@ async function openPdfInOnhandViewer(args = {}) {
 		diagnostics.initialScrollRatio = initialScrollRatio;
 	}
 
-	if (!sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
-		let targetTab;
-		let targetTabWait = {};
-		if (shouldOpenViewerInNewTab) {
-			targetTab = await chrome.tabs.create({
-				url: pdfUrl,
+	// An address the browser saves as a file has no PDF tab to lay the viewer
+	// over (see isDownloadLinkUrl). The viewer opens in a tab of its own, beside
+	// the page the link was on, and asks for the file itself, signed in as the
+	// reader is. Nothing lands in Downloads and the page stays as it was.
+	const openSavedAddressInViewerTab = async () => {
+		// A blank tab Onhand opened for this PDF is the viewer's to take.
+		const ownsSourceTab = args.detachedNewTab === true;
+		const existing = ownsSourceTab ? null : await findExistingPdfViewerTab(pdfUrl, sourceTab.windowId);
+		let viewerTab;
+		let created = false;
+		if (existing && isOwnExtensionPdfViewerUrl(existing.url)) {
+			viewerTab = args.active === false ? existing : await focusTab(existing.id);
+		} else if (ownsSourceTab) {
+			grantOnhandPdfViewerCredentialedSource(sourceTab.id, pdfUrl);
+			viewerTab = await chrome.tabs.update(sourceTab.id, { url: viewerUrl, active: args.active === false ? undefined : true });
+			created = true;
+		} else {
+			viewerTab = await chrome.tabs.create({
+				url: "about:blank",
 				active: args.active !== false,
 				windowId: typeof sourceTab.windowId === "number" ? sourceTab.windowId : undefined,
+				index: typeof sourceTab.index === "number" ? sourceTab.index + 1 : undefined,
 			});
-		} else if (sourceTab.url === pdfUrl || String(sourceTab.url || "").split("#")[0] === pdfUrl.split("#")[0]) {
-			targetTab = args.active === false ? sourceTab : await focusTab(sourceTab.id);
-		} else {
-			targetTab = await chrome.tabs.update(sourceTab.id, {
-				url: pdfUrl,
-				active: args.active === false ? undefined : true,
-			});
-			targetTabWait = tabNavigationWait(sourceTab, pdfUrl);
+			grantOnhandPdfViewerCredentialedSource(viewerTab.id, pdfUrl);
+			viewerTab = await chrome.tabs.update(viewerTab.id, { url: viewerUrl });
+			created = true;
 		}
+		const loadedTab = waitForLoad ? await waitForTabComplete(viewerTab.id, timeoutMs, created ? viewerTabWait : {}) : await chrome.tabs.get(viewerTab.id);
+		const viewerReady = waitForLoad && isOwnExtensionPdfViewerUrl(loadedTab?.url) ? await safeWaitForOnhandPdfViewerReady(loadedTab.id, timeoutMs, pdfUrl) : null;
+		if (created && viewerReady?.ok === false && /failed to load the pdf/i.test(String(viewerReady.error || ""))) {
+			// The file is not a PDF Onhand can read: don't leave a tab that
+			// holds only an error.
+			await chrome.tabs.remove(loadedTab.id).catch(() => {});
+			throw new Error(`${viewerReady.error} This address is a download link rather than a page, so there is no tab to read it from either.`);
+		}
+		// A download link names no file: once the PDF has loaded, the viewer
+		// takes the file's own name for its title. Report the tab as it reads then.
+		const shownTab = viewerReady?.ok ? await chrome.tabs.get(loadedTab.id).catch(() => loadedTab) : loadedTab;
+		return {
+			tab: simplifyTab(shownTab),
+			sourceTab: sourceTabSnapshot,
+			pdfUrl,
+			viewerUrl,
+			initialPageNumber,
+			initialPageSource,
+			initialScrollRatio,
+			selectionHandoff: await getSelectionHandoffResult(loadedTab.id),
+			viewerReady,
+			alreadyOpen: !created,
+			opened: created,
+			replacedCurrentTab: false,
+			preservedSourceUrl: true,
+			savedAddress: true,
+			pageLocationDiagnostics: diagnostics,
+		};
+	};
+	if (savedAddressOpen) return await openSavedAddressInViewerTab();
+
+	if (!sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
+		const sourceShowsAddress = sourceTab.url === pdfUrl || String(sourceTab.url || "").split("#")[0] === pdfUrl.split("#")[0];
+		let targetTab;
+		let targetTabWait = {};
+		let finalTab;
 		let stepStartedAt = Date.now();
-		const finalTab = waitForLoad ? await waitForTabComplete(targetTab.id, timeoutMs, targetTabWait) : await chrome.tabs.get(targetTab.id);
+		// A tab sent to the address finds out what the browser does with it.
+		const commits = sourceShowsAddress ? null : watchMainFrameCommits();
+		try {
+			if (shouldOpenViewerInNewTab) {
+				targetTab = await chrome.tabs.create({
+					url: pdfUrl,
+					active: args.active !== false,
+					windowId: typeof sourceTab.windowId === "number" ? sourceTab.windowId : undefined,
+				});
+			} else if (sourceShowsAddress) {
+				targetTab = args.active === false ? sourceTab : await focusTab(sourceTab.id);
+			} else {
+				targetTab = await chrome.tabs.update(sourceTab.id, {
+					url: pdfUrl,
+					active: args.active === false ? undefined : true,
+				});
+				targetTabWait = tabNavigationWait(sourceTab, pdfUrl);
+			}
+			finalTab = waitForLoad ? await waitForTabComplete(targetTab.id, timeoutMs, targetTabWait) : await chrome.tabs.get(targetTab.id);
+		} catch (error) {
+			// A tab opened for an address that is saved as a file closes itself.
+			if (!commits || !targetTab || targetTab.id === sourceTab.id || !isMissingTabError(error)) throw error;
+			return await openSavedAddressInViewerTab();
+		} finally {
+			commits?.stop();
+		}
 		markStage("tabLoad", stepStartedAt);
+		const openedOwnTab = targetTab.id !== sourceTab.id;
+		if (commits && waitForLoad && tabWasHandedAFile(openedOwnTab ? "about:blank" : sourceTab.url, pdfUrl, finalTab, commits.committed(finalTab.id))) {
+			if (openedOwnTab) await chrome.tabs.remove(finalTab.id).catch(() => {});
+			return await openSavedAddressInViewerTab();
+		}
 		// A tab opened or navigated for this address (the source tab's own
 		// address was checked above): make sure a PDF arrived before laying the
 		// viewer over it.
@@ -12514,6 +12992,13 @@ async function openPdfInOnhandViewer(args = {}) {
 		stepStartedAt = Date.now();
 		const viewerReady = waitForLoad ? await safeWaitForInlineOnhandPdfViewerReady(finalTab.id, timeoutMs, pdfUrl) : null;
 		markStage("viewerReady", stepStartedAt);
+		// The link has expired and no copy of the file was found, but the
+		// browser's own view of the PDF is still under the viewer, and a reload
+		// would lose it. Take the viewer away rather than leave an error over
+		// a PDF the reader can still read.
+		if (viewerReady?.ok === false && String(viewerReady.error || "").includes(REFUSED_PDF_LINK_MESSAGE_START)) {
+			await removeInlineOnhandPdfViewer(finalTab.id).catch(() => {});
+		}
 		stepStartedAt = Date.now();
 		const selectionHandoff = await getSelectionHandoffResult(finalTab.id);
 		markStage("selectionHandoffResult", stepStartedAt);
@@ -13095,6 +13580,104 @@ async function searchResultLinksForTab(tab) {
 	try {
 		const links = await runPageToolkitMethod(tab.id, "getSearchResultLinks", { limit: 10 });
 		return Array.isArray(links?.results) && links.results.length ? links.results : null;
+	} catch {
+		return null;
+	}
+}
+
+// A course page with its modules collapsed holds every file link, hidden, and
+// the page reads return only what the reader can see. A model sent there for
+// the lecture notes saw the module names, found no notes and answered from
+// the homework. Links inside the closed parts of a page are reported beside
+// its text (never as text: they cannot be marked), under the name of the part
+// they sit in.
+function collectCollapsedSectionLinksInPage(options = {}) {
+	const limit = Math.max(1, Math.min(200, Number(options.limit) || 120));
+	const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
+	const shown = (element) => {
+		const rect = element.getBoundingClientRect();
+		return rect.width > 0 && rect.height > 0;
+	};
+	const chrome = 'nav, header, footer, aside, template, dialog, [role="navigation"], [role="menu"], [role="menubar"], [role="dialog"], [role="tooltip"], [role="banner"]';
+	// The closed part an element sits in: a <details> that is not open, or the
+	// nearest ancestor the page does not display.
+	const closedPart = (element) => {
+		const details = element.closest("details:not([open])");
+		if (details && !element.closest("summary")) return details;
+		for (let node = element; node && node !== document.body; node = node.parentElement) {
+			if (node.hasAttribute("hidden") || window.getComputedStyle(node).display === "none") return node;
+		}
+		return null;
+	};
+	const labelText = (element) => normalize(element?.textContent || element?.getAttribute?.("aria-label") || "").slice(0, 80);
+	const partName = (part) => {
+		if (part instanceof HTMLDetailsElement) return labelText(part.querySelector("summary"));
+		const labelledBy = part.getAttribute("aria-labelledby");
+		const labelled = labelledBy ? labelText(document.getElementById(labelledBy.split(/\s+/)[0])) : "";
+		if (labelled) return labelled;
+		if (part.id) {
+			const control = Array.from(document.querySelectorAll("[aria-controls]")).find((element) => element.getAttribute("aria-controls") === part.id);
+			if (control && labelText(control)) return labelText(control);
+		}
+		// A heading of its own: the shown element just before it, or the one
+		// heading of the block that wraps it. The page's title and the page's
+		// own block do not count: a hidden menu under the title is not a section.
+		const headings = 'h1, h2, h3, h4, h5, h6, [role="heading"], legend';
+		for (let previous = part.previousElementSibling; previous; previous = previous.previousElementSibling) {
+			if (!shown(previous)) continue;
+			if (previous.matches(headings) && previous.tagName !== "H1") return labelText(previous);
+			break;
+		}
+		let scope = part.parentElement;
+		for (let depth = 0; scope && depth < 4 && !scope.matches('body, main, article, [role="main"]'); depth += 1, scope = scope.parentElement) {
+			const found = Array.from(scope.querySelectorAll(headings)).filter(shown);
+			if (!found.length) continue;
+			const only = found.length === 1 ? found[0] : null;
+			return only && !only.contains(part) && Boolean(only.compareDocumentPosition(part) & Node.DOCUMENT_POSITION_FOLLOWING) ? labelText(only) : "";
+		}
+		return "";
+	};
+	const here = location.href.split("#")[0];
+	const parts = new Map();
+	const seen = new Set();
+	let total = 0;
+	for (const link of document.querySelectorAll("a[href]")) {
+		if (shown(link) || link.closest(chrome)) continue;
+		const raw = link.getAttribute("href") || "";
+		// "{{ id }}": a row template the page fills in later, not a link.
+		if (!raw || raw.startsWith("#") || /^(?:javascript|mailto|tel):/i.test(raw) || /\x7b\x7b|%7B%7B/i.test(raw)) continue;
+		let url = "";
+		try {
+			const parsed = new URL(raw, location.href);
+			if (/^https?:$/.test(parsed.protocol)) url = parsed.href;
+		} catch {}
+		if (!url || url.length > 400 || url.split("#")[0] === here || seen.has(url)) continue;
+		const text = normalize(link.textContent || link.getAttribute("title") || link.getAttribute("aria-label") || "").slice(0, 140);
+		if (!text) continue;
+		const part = closedPart(link);
+		if (!part || part.closest(chrome)) continue;
+		// A closed part with no name over it is a menu or a template, not a
+		// section of the page a reader could open.
+		if (!parts.has(part)) parts.set(part, { title: partName(part), links: [] });
+		const entry = parts.get(part);
+		if (!entry.title) continue;
+		seen.add(url);
+		total += 1;
+		if (total > limit) continue;
+		entry.links.push({ text, url });
+	}
+	return { sections: Array.from(parts.values()).filter((entry) => entry.links.length), total, omitted: Math.max(0, total - limit) };
+}
+
+async function collapsedSectionLinksForTab(tab) {
+	if (typeof tab?.id !== "number" || !isHttpLikeUrl(tab?.url)) return null;
+	try {
+		const found = await withOperationTimeout(
+			executeScriptInTab(tab.id, collectCollapsedSectionLinksInPage, [{ limit: 120 }]),
+			SCRIPT_EXECUTION_TIMEOUT_MS,
+			"Collapsed link check timed out.",
+		);
+		return Array.isArray(found?.sections) && found.sections.length ? found : null;
 	} catch {
 		return null;
 	}
@@ -14997,7 +15580,14 @@ async function handleCommandInner(name, args = {}) {
 				return { closedTabIds, closedCount: closedTabIds.length };
 			}
 			case "navigate": {
+				// A link that says it downloads, and answers with a PDF, goes straight
+				// to Onhand's viewer: sending a tab there first would only put a copy
+				// of the file in the reader's Downloads.
+				if (isDownloadLinkUrl(args.url) && (await probeAddressIsPdf(args.url)) === true) {
+					return await openSavedAddressAfterNavigation(args, null, true);
+				}
 				const navigation = await navigateBrowser(args);
+				if (navigation.savedAddress) return await openSavedAddressAfterNavigation(args, navigation);
 				const probeError = await probeTabScriptable(navigation.tab?.id);
 				const blocked = classifyBlockedNavigation(navigation.tab, probeError);
 				const onhandPdfViewer = await mountOnhandPdfViewerForBackgroundPdf(navigation, blocked);
@@ -15048,6 +15638,8 @@ async function handleCommandInner(name, args = {}) {
 					}, openTimeoutMs);
 				}
 				const tab = await resolveTargetTab(targetArgs);
+				// Each step inside has its own limit; this one only has to outlast
+				// a viewer that is waiting for a slow site to send the file.
 				return await withTabCommand(tab.id, async () => {
 					try {
 						return await openPdfInOnhandViewer({ ...targetArgs, tabId: tab.id });
@@ -15056,7 +15648,7 @@ async function handleCommandInner(name, args = {}) {
 						if (blocked) throw new Error(`The PDF tab is blocked before it can load. ${blocked.detail}`);
 						throw error;
 					}
-				});
+				}, ONHAND_PDF_VIEWER_SLOW_SITE_READY_TIMEOUT_MS + TAB_COMMAND_TIMEOUT_MS);
 			}
 		case "get_cookies": {
 			const tab = await resolveTargetTab(args);
@@ -15123,9 +15715,11 @@ async function handleCommandInner(name, args = {}) {
 					else throw error;
 				}
 				const searchResults = await searchResultLinksForTab(tab);
+				const collapsedLinks = args.startBlock ? null : await collapsedSectionLinksForTab(tab);
+				const found = { ...(searchResults ? { searchResults } : {}), ...(collapsedLinks ? { collapsedLinks } : {}) };
 				return {
 					tab: simplifyTab(tab),
-					content: searchResults && content && typeof content === "object" ? { ...content, searchResults } : content,
+					content: content && typeof content === "object" ? { ...content, ...found } : content,
 				};
 			});
 		}
@@ -15306,9 +15900,11 @@ async function handleCommandInner(name, args = {}) {
 					maxBlocks: args.maxBlocks,
 				});
 				const searchResults = await searchResultLinksForTab(tab);
+				const collapsedLinks = await collapsedSectionLinksForTab(tab);
+				const found = { ...(searchResults ? { searchResults } : {}), ...(collapsedLinks ? { collapsedLinks } : {}) };
 				return {
 					tab: simplifyTab(tab),
-					visible: searchResults && visible && typeof visible === "object" ? { ...visible, searchResults } : visible,
+					visible: visible && typeof visible === "object" ? { ...visible, ...found } : visible,
 				};
 			});
 		}

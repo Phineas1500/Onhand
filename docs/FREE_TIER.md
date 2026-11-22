@@ -316,8 +316,11 @@ matcher have their own names: `pdf_surface` (a PDF shown where Onhand cannot
 mark it, such as a viewer without a text layer or an embed inside a web
 page), `tab_kind` (a tab that is not a web page), `region` (a region
 highlight the PDF viewer turned down), `not_pdf` (an address that looked
-like a PDF and was a web page) and `pdf_load` (the viewer could not load or
-read the PDF). Two more name a turn's own state: `turn_limit` (the turn had
+like a PDF and was a web page), `pdf_load` (the viewer could not load or
+read the PDF), `expired_link` (a PDF's download link had stopped working
+and the browser held no copy of the file to open instead) and `download` (an
+address the browser saved as a file instead of opening, where the file was not
+a PDF Onhand could open). Two more name a turn's own state: `turn_limit` (the turn had
 made more than 30 model calls, so page reads and navigation were refused and
 the model was told to answer; past 40 calls the next model call goes out
 without tools) and `stale_mark` (a highlight asked for by id was no longer on

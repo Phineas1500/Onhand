@@ -772,22 +772,40 @@ async function assertGenericScrollSettlesWithPausedFrames() {
 	} finally { clearTimeout(timeout); }
 }
 
-// Notes without room beside the page: one card stays open, the rest fold into
-// tabs at the page edge, level with their highlights.
+// Notes without room beside the page sit over it. The card last shown or
+// clicked always has a place; others stay open while no card covers another:
+// every card the reader opened, and a card Onhand added only where it is clear
+// of the text. The rest fold into tabs at the page edge, level with their
+// highlights. (One card a page was the rule at first: opening a second note
+// closed the first, so two notes could not be read together.)
 function assertNarrowPdfNotesFoldToTabs() {
-	const dom = new JSDOM('<section class="page" data-page-number="1"><div class="onhand-pdf-annotation-layer"></div></section>');
-	try {
+	// A card is measured where it has the page's width to size itself in, not
+	// at the margin spot it is leaving (zooming in past the margin columns
+	// measured it narrow there, called it clear of the text, then widened it).
+	assert.match(
+		source,
+		/setImportantStyle\(note, "left", "0px"\);\n\t\tconst measuredRect = note\.getBoundingClientRect\(\);/,
+		"in-page cards are measured at the page's left edge",
+	);
+	const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
+	const build = ({ pageWidth = 500, pageHeight = 650, tops = [200, 215, 230], dense = true } = {}) => {
+		const dom = new JSDOM('<section class="page" data-page-number="1"><div class="textLayer"></div><div class="onhand-pdf-annotation-layer"></div></section>');
 		const { document } = dom.window;
 		const page = document.querySelector(".page");
-		const layer = page.firstElementChild;
-		Object.defineProperties(page, { clientWidth: { get: () => 500 }, clientHeight: { get: () => 650 } });
-		const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
-		page.getBoundingClientRect = () => rect(0, 0, 500, 650);
-		const notes = [200, 215, 230].map((top, index) => {
+		const layer = page.lastElementChild;
+		Object.defineProperties(page, { clientWidth: { get: () => pageWidth }, clientHeight: { get: () => pageHeight } });
+		page.getBoundingClientRect = () => rect(0, 0, pageWidth, pageHeight);
+		// A dense page: a line of text every 16 px, margin to margin.
+		for (let top = 20; dense && top < pageHeight - 20; top += 16) {
+			const line = document.createElement("span");
+			line.getBoundingClientRect = () => rect(40, top, pageWidth - 80, 12);
+			page.firstElementChild.append(line);
+		}
+		const notes = tops.map((top, index) => {
 			const id = `a${index + 1}`;
 			const mark = document.createElement("div");
 			mark.setAttribute("data-onhand-annotation-id", id);
-			mark.getBoundingClientRect = () => rect(80, top, 340, 12);
+			mark.getBoundingClientRect = () => rect(80, top, Math.min(340, pageWidth - 160), 12);
 			const note = document.createElement("div");
 			note.setAttribute("data-onhand-pdf-note", "true");
 			note.setAttribute("data-onhand-note-for", id);
@@ -801,11 +819,29 @@ function assertNarrowPdfNotesFoldToTabs() {
 			return note;
 		});
 		const viewer = loadFunctions(
-			["setImportantStyle", "setImportantStyles", "setPdfNoteCollapsed", "getPageLayoutSize", "toPageRect", "rectOverlapArea", "getPdfTextRects", "scorePdfNoteCandidate", "collectOtherPdfNoteRects", "choosePdfNotePosition", "layoutPdfInPageNotes"],
-			{ document, CSS: { escape: (value) => value }, PDF_NOTE_FOLDED_ATTRIBUTE: "data-onhand-note-folded", PDF_NOTE_OPENED_ATTRIBUTE: "data-onhand-note-opened", PDF_NOTE_TAB_SIZE: 30, PDF_NOTE_TAB_INSET: 6, PDF_NOTE_TAB_GAP: 4 },
+			["setImportantStyle", "setImportantStyles", "setPdfNoteCollapsed", "getPageLayoutSize", "toPageRect", "rectOverlapArea", "getPdfTextRects", "scorePdfNoteCandidate", "choosePdfNotePosition", "layoutPdfInPageNotes", "markPdfNoteOpened", "expandPdfNoteForAnnotation"],
+			{
+				document, CSS: { escape: (value) => value }, pdfNoteOpenSequence: 10,
+				PDF_NOTE_FOLDED_ATTRIBUTE: "data-onhand-note-folded", PDF_NOTE_OPENED_ATTRIBUTE: "data-onhand-note-opened", PDF_NOTE_READER_OPENED_ATTRIBUTE: "data-onhand-note-reader-opened",
+				PDF_NOTE_TAB_SIZE: 30, PDF_NOTE_TAB_INSET: 6, PDF_NOTE_TAB_GAP: 4, PDF_NOTE_CLEAR_TEXT_FRACTION: constant("PDF_NOTE_CLEAR_TEXT_FRACTION"),
+				findNoteForAnnotation: (id) => notes[Number(id.slice(1)) - 1],
+				refreshPdfNotePositions: ([target], note) => viewer.layoutPdfInPageNotes(target, target.getBoundingClientRect(), note || null),
+			},
 		);
+		const layout = (note = null) => viewer.layoutPdfInPageNotes(page, page.getBoundingClientRect(), note);
 		const open = () => notes.filter((note) => note.getAttribute("data-onhand-note-collapsed") !== "true");
-		viewer.layoutPdfInPageNotes(page, page.getBoundingClientRect(), null);
+		const covering = () => {
+			const cards = open().map((note) => note.getBoundingClientRect());
+			return cards.some((a, i) => cards.some((b, j) => i < j && viewer.rectOverlapArea(a, b) > 0));
+		};
+		return { dom, notes, viewer, layout, open, covering };
+	};
+
+	// A dense page, notes Onhand added: every extra card would sit on the text, so only the latest stays open.
+	const dense = build();
+	try {
+		const { notes, viewer, layout, open, covering } = dense;
+		layout();
 		assert.deepEqual(open(), [notes[2]], "the latest note stays open");
 		const tabs = notes.slice(0, 2);
 		for (const tab of tabs) {
@@ -815,12 +851,46 @@ function assertNarrowPdfNotesFoldToTabs() {
 		}
 		assert.equal(tabs[0].style.top, "200px", "a tab is level with its highlight");
 		assert.equal(tabs[1].style.top, "234px", "tabs stack without covering each other");
-		viewer.setPdfNoteCollapsed(notes[0], false);
-		viewer.layoutPdfInPageNotes(page, page.getBoundingClientRect(), notes[0]);
-		assert.deepEqual(open(), [notes[0]], "opening a tab folds the open card");
+		// The reader opens another: the card already open stays open beside it.
+		viewer.expandPdfNoteForAnnotation("a1");
+		assert.deepEqual(open(), [notes[0], notes[2]], "opening one note does not close another");
+		assert.equal(covering(), false, "and neither card covers the other");
 		assert.equal(notes[0].hasAttribute("data-onhand-note-folded"), false);
-		assert.equal(notes[2].getAttribute("data-onhand-note-folded"), "true");
-	} finally { dom.window.close(); }
+		assert.equal(notes[1].getAttribute("data-onhand-note-folded"), "true", "a note nobody opened stays a tab");
+		// They stay through a later layout (a zoom step, a new render).
+		layout();
+		assert.deepEqual(open(), [notes[0], notes[2]]);
+		// The third, too.
+		viewer.expandPdfNoteForAnnotation("a2");
+		assert.deepEqual(open(), notes, "three notes the reader opened are all open");
+		assert.equal(covering(), false);
+		// Closing one leaves the others as they were, and it is an ordinary tab again.
+		viewer.setPdfNoteCollapsed(notes[0], true);
+		layout();
+		assert.deepEqual(open(), [notes[1], notes[2]]);
+		assert.equal(notes[0].hasAttribute("data-onhand-note-folded"), false, "a note the reader closed is not waiting for room");
+		assert.equal(notes[0].hasAttribute("data-onhand-note-reader-opened"), false);
+	} finally { dense.dom.window.close(); }
+
+	// A page with room clear of the text (slides, a title page): the notes Onhand added all stay open.
+	const clear = build({ dense: false });
+	try {
+		clear.layout();
+		assert.deepEqual(clear.open(), clear.notes, "cards clear of the text stay open together");
+		assert.equal(clear.covering(), false);
+	} finally { clear.dom.window.close(); }
+
+	// No way to show two cards without one covering the other: the one just opened wins, as before.
+	const cramped = build({ pageWidth: 340, pageHeight: 150, tops: [40, 70], dense: false });
+	try {
+		const { notes, viewer, layout, open } = cramped;
+		layout();
+		assert.deepEqual(open(), [notes[1]]);
+		viewer.expandPdfNoteForAnnotation("a1");
+		assert.deepEqual(open(), [notes[0]], "cards never cover each other, whoever opened them");
+		assert.equal(notes[1].getAttribute("data-onhand-note-folded"), "true");
+		assert.equal(notes[1].hasAttribute("data-onhand-note-reader-opened"), false);
+	} finally { cramped.dom.window.close(); }
 }
 
 // Centered pages split the spare width; when only the two gutters together fit

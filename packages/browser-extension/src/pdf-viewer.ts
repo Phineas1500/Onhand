@@ -26,6 +26,8 @@ const PAGE_TEXT_READS_AT_ONCE = 8;
 const TOOLKIT_QUIET_MS = 400;
 const PDF_LOAD_TIMEOUT_MS = 20000;
 const CREDENTIALED_PDF_LOAD_RETRY_TIMEOUT_MS = 12000;
+const PDF_FETCHING_FROM_SITE_ATTRIBUTE = "data-onhand-pdf-fetching-from-site";
+const PDF_SLOW_SITE_NOTICE_MS = 5000;
 const PDF_VIEWER_ANNOTATION_THEME = "light";
 
 const viewer = document.getElementById("viewer") as HTMLElement;
@@ -1519,20 +1521,18 @@ function scorePdfNoteCandidate(candidate: PageRect & { order: number }, textRect
 	return textOverlap * 800 + anchorOverlap * 1600 + noteOverlap * 6000 + anchorDistance + candidate.order * 4;
 }
 
-function collectOtherPdfNoteRects(note: HTMLElement, page: HTMLElement, pageRect: DOMRect): PageRect[] {
-	const overlay = page.querySelector<HTMLElement>(".onhand-pdf-annotation-layer");
-	if (!overlay) return [];
-	return Array.from(overlay.querySelectorAll<HTMLElement>("[data-onhand-pdf-note]"))
-		.filter((element) => element !== note)
-		.map((element) => {
-			const rect = element.getBoundingClientRect();
-			if (!rect || rect.width <= 0 || rect.height <= 0) return null;
-			return toPageRect(rect, page, pageRect);
-		})
-		.filter((rect): rect is PageRect => Boolean(rect));
-}
-
-function choosePdfNotePosition(page: HTMLElement, pageRect: DOMRect, anchorRect: PageRect, noteWidth: number, noteHeight: number, noteRects: PageRect[] = []) {
+// `accept` rules candidates out (a spot that would cover another open card,
+// say); with none left the answer is null.
+function choosePdfNotePosition(
+	page: HTMLElement,
+	pageRect: DOMRect,
+	anchorRect: PageRect,
+	noteWidth: number,
+	noteHeight: number,
+	noteRects: PageRect[] = [],
+	accept: ((candidate: PageRect) => boolean) | null = null,
+	textRects: PageRect[] = getPdfTextRects(page, pageRect),
+) {
 	const { width: pageWidth, height: pageHeight } = getPageLayoutSize(page, pageRect);
 	const margin = Math.max(12, Math.min(20, pageWidth * 0.025));
 	const gap = Math.max(10, Math.min(18, pageHeight * 0.018));
@@ -1575,8 +1575,8 @@ function choosePdfNotePosition(page: HTMLElement, pageRect: DOMRect, anchorRect:
 		height: noteHeight,
 		order,
 	}));
-	const textRects = getPdfTextRects(page, pageRect);
 	return candidates.reduce<(PageRect & { order: number; score: number }) | null>((best, candidate) => {
+		if (accept && !accept(candidate)) return best;
 		const score = scorePdfNoteCandidate(candidate, textRects, anchorRect, noteRects);
 		return !best || score < best.score ? { ...candidate, score } : best;
 	}, null);
@@ -1588,6 +1588,7 @@ function setPdfNoteCollapsed(note: HTMLElement, collapsed: boolean) {
 	const toggle = note.querySelector<HTMLButtonElement>("[data-onhand-note-toggle]");
 	note.setAttribute("data-onhand-note-collapsed", collapsed ? "true" : "false");
 	if (!collapsed) note.removeAttribute(PDF_NOTE_FOLDED_ATTRIBUTE);
+	else note.removeAttribute(PDF_NOTE_READER_OPENED_ATTRIBUTE);
 	if (body) body.hidden = collapsed;
 	if (label) label.hidden = collapsed;
 	if (toggle) {
@@ -1793,14 +1794,20 @@ function applyPdfNoteCardStyles(note: HTMLElement, page: HTMLElement, pageRect: 
 	if (collapsed) setPdfNoteCollapsed(note, true);
 }
 
-// With no room beside the page, every open card would cover the text and the
-// other cards. One card stays open per page, the latest shown or clicked; the
-// rest fold into tabs at the page edge, level with their highlights.
+// With no room beside the page, open cards sit over it. The card last shown
+// or clicked always has a place. Others stay open beside it while no card
+// covers another: every card the reader opened, and a card Onhand added only
+// where it sits clear of the text. The rest fold into tabs at the page edge,
+// level with their highlights. (One card a page was the rule at first: a
+// reader comparing two notes could not keep both open.)
 const PDF_NOTE_FOLDED_ATTRIBUTE = "data-onhand-note-folded";
 const PDF_NOTE_OPENED_ATTRIBUTE = "data-onhand-note-opened";
+const PDF_NOTE_READER_OPENED_ATTRIBUTE = "data-onhand-note-reader-opened";
 const PDF_NOTE_TAB_SIZE = 30;
 const PDF_NOTE_TAB_INSET = 6;
 const PDF_NOTE_TAB_GAP = 4;
+// A card Onhand added counts as clear of the text when it covers about a line of it at most.
+const PDF_NOTE_CLEAR_TEXT_FRACTION = 0.15;
 let pdfNoteOpenSequence = 0;
 
 function markPdfNoteOpened(note: HTMLElement) {
@@ -1821,44 +1828,70 @@ function layoutPdfInPageNotes(page: HTMLElement, pageRect: DOMRect, open: HTMLEl
 		})
 		.sort((a, b) => (a.anchor?.top ?? Infinity) - (b.anchor?.top ?? Infinity));
 	const openedAt = (note: HTMLElement) => Number(note.getAttribute(PDF_NOTE_OPENED_ATTRIBUTE) || 0);
-	const keep =
-		open && isOpen(open)
-			? open
-			: entries
-					.map((entry) => entry.note)
-					.filter(isOpen)
-					.sort((a, b) => openedAt(b) - openedAt(a))[0] || null;
-	const nextTabTop = { left: 0, right: 0 };
-	for (const { note, anchor } of entries) {
-		if (note === keep) continue;
-		if (isOpen(note)) {
+	// The nearer page edge is where a note's tab sits.
+	const tabSide = (anchor: PageRect | null) => (!anchor || anchor.left <= pageWidth - anchor.right ? "left" : "right");
+	const tabLeft = (side: "left" | "right") => (side === "left" ? PDF_NOTE_TAB_INSET : pageWidth - PDF_NOTE_TAB_SIZE - PDF_NOTE_TAB_INSET);
+	const tabTop = (anchor: PageRect | null, least = 0) => Math.max(0, Math.min(pageHeight - PDF_NOTE_TAB_SIZE, Math.max(anchor?.top ?? 0, least)));
+
+	// Cards, latest first.
+	const cards = entries
+		.filter((entry) => isOpen(entry.note))
+		.sort((a, b) => Number(b.note === open) - Number(a.note === open) || openedAt(b.note) - openedAt(a.note));
+	const textRects = cards.some((entry) => entry.anchor) ? getPdfTextRects(page, pageRect) : [];
+	const placed: PageRect[] = [];
+	for (const entry of cards) {
+		const { note, anchor } = entry;
+		if (!anchor) continue;
+		const always = placed.length === 0;
+		// A card sizes itself to the room right of where it sits. One still at
+		// its margin spot, past the page's edge, measures narrow and tall, was
+		// judged clear of the text at that size, and then widened over it.
+		setImportantStyle(note, "left", "0px");
+		const measuredRect = note.getBoundingClientRect();
+		// The card's rendered size, not the CSS max-width cap — overestimating
+		// width inflates overlap penalties and pushes notes away from their highlight.
+		const width = Math.max(220, Math.min(360, note.offsetWidth || measuredRect.width || 360));
+		const height = Math.max(76, note.offsetHeight || measuredRect.height || 96);
+		const cardAt = (spot: PageRect): PageRect => ({ left: spot.left, top: spot.top, right: spot.left + width, bottom: spot.top + height, width, height });
+		// Keep clear of where the other notes' tabs sit, so a tab is never buried.
+		const tabSlots = entries
+			.filter((other) => other !== entry)
+			.map((other) => {
+				const left = tabLeft(tabSide(other.anchor));
+				const top = tabTop(other.anchor);
+				return { left, top, right: left + PDF_NOTE_TAB_SIZE, bottom: top + PDF_NOTE_TAB_SIZE, width: PDF_NOTE_TAB_SIZE, height: PDF_NOTE_TAB_SIZE };
+			});
+		const readerOpened = note.hasAttribute(PDF_NOTE_READER_OPENED_ATTRIBUTE);
+		const fits = (spot: PageRect) => {
+			const card = cardAt(spot);
+			if (placed.some((rect) => rectOverlapArea(card, rect) > 0)) return false;
+			if (readerOpened) return true;
+			const covered = textRects.reduce((sum, rect) => sum + rectOverlapArea(card, rect), 0);
+			return covered / Math.max(1, width * height) <= PDF_NOTE_CLEAR_TEXT_FRACTION;
+		};
+		const spot = choosePdfNotePosition(page, pageRect, anchor, width, Math.min(240, height), [...placed, ...tabSlots], always ? null : fits, textRects);
+		if (!spot) {
+			if (always) continue;
 			setPdfNoteCollapsed(note, true);
 			note.setAttribute(PDF_NOTE_FOLDED_ATTRIBUTE, "true");
+			continue;
 		}
+		setImportantStyle(note, "left", `${spot.left}px`);
+		setImportantStyle(note, "top", `${spot.top}px`);
+		placed.push(cardAt(spot));
+	}
+
+	// Tabs: stacked down each edge without covering each other.
+	const nextTabTop = { left: 0, right: 0 };
+	for (const { note, anchor } of entries) {
+		if (isOpen(note)) continue;
 		// Unlike a note the reader closed, a folded note is still meant to be found.
 		if (note.hasAttribute(PDF_NOTE_FOLDED_ATTRIBUTE)) setImportantStyle(note, "opacity", "0.9");
-		const anchorRect = anchor || { left: 0, right: 0, top: 0 };
-		// The nearer page edge; tabs stack down it without covering each other.
-		const side = anchorRect.left <= pageWidth - anchorRect.right ? "left" : "right";
-		const top = Math.max(0, Math.min(pageHeight - PDF_NOTE_TAB_SIZE, Math.max(anchorRect.top, nextTabTop[side])));
-		const left = side === "left" ? PDF_NOTE_TAB_INSET : pageWidth - PDF_NOTE_TAB_SIZE - PDF_NOTE_TAB_INSET;
-		setImportantStyle(note, "left", `${left}px`);
+		const side = tabSide(anchor);
+		const top = tabTop(anchor, nextTabTop[side]);
+		setImportantStyle(note, "left", `${tabLeft(side)}px`);
 		setImportantStyle(note, "top", `${top}px`);
 		nextTabTop[side] = top + PDF_NOTE_TAB_SIZE + PDF_NOTE_TAB_GAP;
-	}
-	const kept = entries.find((entry) => entry.note === keep);
-	if (!kept?.anchor) return;
-	const measuredRect = kept.note.getBoundingClientRect();
-	const noteHeight = Math.max(76, Math.min(240, measuredRect.height || kept.note.offsetHeight || 96));
-	// Score candidates with the note's rendered width, not the CSS
-	// max-width cap — overestimating width inflates overlap penalties and
-	// pushes notes away from their highlight.
-	const noteWidth = Math.max(220, Math.min(360, measuredRect.width || 360));
-	const otherNoteRects = collectOtherPdfNoteRects(kept.note, page, pageRect);
-	const positioned = choosePdfNotePosition(page, pageRect, kept.anchor, noteWidth, noteHeight, otherNoteRects);
-	if (positioned) {
-		setImportantStyle(kept.note, "left", `${positioned.left}px`);
-		setImportantStyle(kept.note, "top", `${positioned.top}px`);
 	}
 }
 
@@ -1867,7 +1900,13 @@ function expandPdfNoteForAnnotation(annotationId: string) {
 	if (!note) return null;
 	setPdfNoteCollapsed(note, false);
 	markPdfNoteOpened(note);
+	// Opened by the reader (a click on its tab, or on its citation in the
+	// chat): it stays open until the reader closes it, text under it or not.
+	// So do the cards already open on its page, which the reader chose to
+	// keep beside it: opening one note must not close another.
 	const page = note.closest<HTMLElement>(".page[data-page-number]");
+	const beside = page ? Array.from(page.querySelectorAll<HTMLElement>('.onhand-pdf-annotation-layer [data-onhand-pdf-note]:not([data-onhand-note-collapsed="true"])')) : [];
+	for (const card of [note, ...beside]) card.setAttribute(PDF_NOTE_READER_OPENED_ATTRIBUTE, "true");
 	if (page) refreshPdfNotePositions([page], note);
 	return note;
 }
@@ -2943,6 +2982,7 @@ async function runViewerCommand(data: any) {
 			error: document.querySelector(".onhand-pdf-error")?.textContent || "",
 			statusText: document.querySelector("#onhand-pdf-status")?.textContent || "",
 			pageCountText: document.querySelector("#onhand-pdf-page-count")?.textContent || "",
+			fetchingFromSite: document.body?.getAttribute(PDF_FETCHING_FROM_SITE_ATTRIBUTE) === "true",
 			pageNumber: Number.parseInt(pageInput?.value || "1", 10) || 1,
 			sourceUrl,
 		};
@@ -3258,9 +3298,19 @@ async function loadPdfDocumentFromUrl(value: string) {
 		} catch (credentialError: any) {
 			setStatus("Retrying through the authenticated browser tab...");
 			let browserLoad: any = null;
+			// Some sites build the file afresh for every request and let the
+			// browser keep no copy (a Gradescope graded copy: 11 s before the
+			// first byte). Whoever is waiting for this viewer is told the file is
+			// still on its way, and the reader sees why nothing has appeared.
+			document.body?.setAttribute(PDF_FETCHING_FROM_SITE_ATTRIBUTE, "true");
+			const slowNotice = setTimeout(() => setStatus("The site is still preparing this PDF..."), PDF_SLOW_SITE_NOTICE_MS);
 			try {
 				browserLoad = await chrome.runtime.sendMessage({ type: "pdf-viewer:load-authorized-source", url: value });
-			} catch {}
+			} catch {
+			} finally {
+				clearTimeout(slowNotice);
+				document.body?.removeAttribute(PDF_FETCHING_FROM_SITE_ATTRIBUTE);
+			}
 			if (!browserLoad?.ok || !browserLoad?.dataBase64) {
 				throw new Error(
 					browserLoad?.error || credentialError?.message || initialError?.message || "Could not load the protected PDF.",
@@ -3355,6 +3405,18 @@ function sourceTitle(url: string) {
 	} catch {
 		return "PDF";
 	}
+}
+
+// An address that names no file ("…/files/123/download") titled the tab
+// "download". The file host's own name for the file, or failing that the
+// PDF's title, says what the reader has open. "" keeps the address's name.
+function documentNameForTitle(urlTitle: string, metadata: any) {
+	if (/\.pdf$/i.test(urlTitle)) return "";
+	for (const value of [metadata?.contentDispositionFilename, metadata?.info?.Title]) {
+		const name = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+		if (name && name.length <= 200 && name !== urlTitle) return name;
+	}
+	return "";
 }
 
 function updatePageFromScroll() {
@@ -3954,6 +4016,19 @@ async function loadPdf() {
 	setStatus("Loading PDF...");
 	pdfDocument = await loadPdfDocumentFromUrl(sourceUrl);
 	cachedPdfTextLayerInfo = null;
+	if (!/\.pdf$/i.test(title)) {
+		// Not awaited: a better name must not hold up the first page.
+		const loaded = pdfDocument;
+		void Promise.resolve()
+			.then(() => loaded.getMetadata())
+			.then((metadata: any) => {
+				const name = documentNameForTitle(title, metadata);
+				if (!name || loaded !== pdfDocument) return;
+				document.title = `${name} - Onhand PDF Viewer`;
+				titleElement.textContent = name;
+			})
+			.catch(() => {});
+	}
 	const pageCount = Number(pdfDocument.numPages || 0);
 	const explicitInitialPageNumber = parseInitialPageNumber(pageCount);
 	const initialPageNumber = explicitInitialPageNumber || pageNumberFromScrollRatio(parseInitialScrollRatio(), pageCount) || 1;

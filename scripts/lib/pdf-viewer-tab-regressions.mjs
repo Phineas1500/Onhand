@@ -8,7 +8,8 @@ export async function runPdfViewerTabRegressions() {
 	const names = ["wakeTabForPageCommand", "resolveTargetTab", "focusTab", "isFileUrl", "isHttpLikeUrl", "isHttpsUrl",
 		"isLikelyPdfResourceUrl", "normalizePdfUrlCandidate", "isOwnExtensionPdfViewerUrl", "isOnhandPdfViewerLikeUrl",
 		"extractPdfSourceUrlFromViewerLikeUrl", "resolvePdfSourceUrlForViewer", "stripUrlHash", "normalizePdfPageNumber",
-		"shouldDetachPdfViewerOpenFromSourceTab", "pdfTabMatchesSource", "findExistingPdfViewerTab", "tabNavigationWait", "openPdfInOnhandViewer"];
+		"shouldDetachPdfViewerOpenFromSourceTab", "pdfTabMatchesSource", "findExistingPdfViewerTab", "tabNavigationWait",
+		"isDownloadLinkUrl", "watchMainFrameCommits", "tabWasHandedAFile", "isMissingTabError", "shouldInferPdfPageNumberFromTab", "openPdfInOnhandViewer"];
 	const functions = names.map((name) => {
 		const match = new RegExp(`^(?:async )?function ${name}\\(`, "m").exec(source);
 		assert.ok(match, `Missing production function ${name}`);
@@ -25,23 +26,33 @@ export async function runPdfViewerTabRegressions() {
 	const messageMatch = /const WEB_PAGE_AT_PDF_ADDRESS_MESSAGE =\s*("(?:[^"\\]|\\.)*");/.exec(source);
 	assert.ok(messageMatch, "Missing production message WEB_PAGE_AT_PDF_ADDRESS_MESSAGE");
 	// webPages: addresses that answer with a web page instead of a PDF, and the PDF each one embeds.
-	function harness(initialTabs, { existingViewer = null, isFirefox = false, inlineInstallError = null, webPages = {} } = {}) {
+	// savedAddresses: addresses the browser saves as a file instead of showing (a tab sent to one stays
+	// where it was; a tab opened for one closes itself). viewerLoadError: what the viewer tab reports.
+	function harness(initialTabs, { existingViewer = null, isFirefox = false, inlineInstallError = null, webPages = {}, savedAddresses = [], viewerLoadError = "", viewerTitle = "" } = {}) {
 		const tabs = new Map(initialTabs.map((tab) => [tab.id, { status: "complete", ...tab }]));
-		const created = [], installed = [], queues = [], inferred = [], updated = [], removed = [], tabWaits = [], viewerWaits = [];
+		const created = [], installed = [], queues = [], inferred = [], updated = [], removed = [], tabWaits = [], viewerWaits = [], grants = [], selectionProbes = [];
+		const saved = (url) => savedAddresses.includes(String(url || ""));
 		let nextId = 100;
 		const chrome = {
 			runtime: { getURL: (path) => `chrome-extension://onhand-test/${path}` },
 			windows: { getLastFocused: async () => ({ id: 1 }), update: async () => {} },
 			tabs: {
-				get: async (id) => { assert.ok(tabs.has(id)); return { ...tabs.get(id) }; },
+				get: async (id) => { if (!tabs.has(id)) throw new Error(`No tab with id: ${id}.`); return { ...tabs.get(id) }; },
 				query: async (query) => [...tabs.values()].filter((tab) =>
 					(query.windowId === undefined || tab.windowId === query.windowId)
 					&& (!query.lastFocusedWindow || tab.windowId === 1) && (!query.active || tab.active)),
 				create: async (args) => {
 					const tab = { id: nextId++, windowId: 1, url: "about:blank", status: "complete", ...args };
-					created.push(args); tabs.set(tab.id, tab); return { ...tab };
+					created.push(args); tabs.set(tab.id, tab);
+					if (saved(args.url)) tabs.delete(tab.id);
+					return { ...tab };
 				},
-				update: async (id, args) => { updated.push({ id, ...args }); Object.assign(tabs.get(id), args); return { ...tabs.get(id) }; },
+				update: async (id, args) => {
+					updated.push({ id, ...args });
+					const { url, ...rest } = args;
+					Object.assign(tabs.get(id), saved(url) || url === undefined ? rest : args);
+					return { ...tabs.get(id) };
+				},
 				remove: async (id) => { removed.push(id); tabs.delete(id); },
 			},
 		};
@@ -55,9 +66,11 @@ export async function runPdfViewerTabRegressions() {
 			localFileAccessMessage: () => "Allow access to file URLs",
 			createPdfViewerHandoffDiagnostics: () => null,
 			normalizePdfSelectionForViewerHandoff: () => null,
-			getPdfSelectionForViewerHandoff: async () => null,
+			getPdfSelectionForViewerHandoff: async (tab) => { selectionProbes.push(tab.id); return null; },
 			withOperationTimeout: (promise) => promise,
 			PDF_SELECTION_HANDOFF_TIMEOUT_MS: 100,
+			ONHAND_PDF_VIEWER_SLOW_SITE_READY_TIMEOUT_MS: 70000,
+			TAB_COMMAND_TIMEOUT_MS: 15000,
 			getPdfPageNumberFromSelectionPayload: () => null,
 			inferInitialPdfViewerPageLocation: async (_args, tab) => { inferred.push(tab.id); return { pageNumber: 7, source: "native-viewer" }; },
 			probeInlineOnhandPdfViewerStatus: async () => existingViewer,
@@ -67,14 +80,19 @@ export async function runPdfViewerTabRegressions() {
 			log: () => {},
 			waitForTabComplete: (id, _timeoutMs, options = {}) => { tabWaits.push({ id, ...options }); return chrome.tabs.get(id); },
 			ensureInlinePdfViewerBridgeToken: async () => {},
-			grantOnhandPdfViewerCredentialedSource: () => {},
+			grantOnhandPdfViewerCredentialedSource: (id, url) => { grants.push({ id, url }); },
 			installInlineOnhandPdfViewer: async (id, url, options) => {
 				if (inlineInstallError) throw inlineInstallError;
 				installed.push({ id, url, options });
 				return { ok: true };
 			},
 			safeWaitForInlineOnhandPdfViewerReady: async () => ({ ready: true }),
-			safeWaitForOnhandPdfViewerReady: async (id, _timeoutMs, pdfUrl) => { viewerWaits.push({ id, pdfUrl }); return { ready: true }; },
+			safeWaitForOnhandPdfViewerReady: async (id, _timeoutMs, pdfUrl) => {
+				viewerWaits.push({ id, pdfUrl });
+				// The viewer names itself after the file once the PDF has loaded.
+				if (viewerTitle && !viewerLoadError) tabs.get(id).title = viewerTitle;
+				return viewerLoadError ? { ok: false, error: viewerLoadError } : { ok: true, ready: true };
+			},
 			withTabCommand: async (id, run) => { queues.push(id); return await run(); },
 			classifyBlockedNavigation: () => null,
 			WEB_PAGE_AT_PDF_ADDRESS_MESSAGE: JSON.parse(messageMatch[1]),
@@ -83,7 +101,7 @@ export async function runPdfViewerTabRegressions() {
 		const api = new Function(...Object.keys(dependencies), `${functions}\nreturn {
 			open: async (args) => { switch ("open_pdf_in_onhand_viewer") { ${command} } }
 		};`)(...Object.values(dependencies));
-		return { ...api, created, installed, queues, inferred, tabs, updated, removed, tabWaits, viewerWaits };
+		return { ...api, created, installed, queues, inferred, tabs, updated, removed, tabWaits, viewerWaits, grants, selectionProbes };
 	}
 	const native = { id: 1, windowId: 1, active: true, url: `${pdf}#page=7` };
 	const index = "https://example.test/index";
@@ -233,9 +251,117 @@ export async function runPdfViewerTabRegressions() {
 		assert.equal(h.installed.length, 0);
 		assert.equal(h.tabs.get(1).url, wrapper);
 	}
+	// A course site's "Download" link hands the browser a file to save. A tab
+	// sent to one stayed on the course page, the file landed in Downloads, and
+	// the viewer was laid over the course page, where it could not load the
+	// file ("The authenticated PDF retry no longer matches the source tab").
+	const coursePage = "https://canvas.example.edu/courses/20417/files/5550123";
+	const downloadLink = `${coursePage}/download?download_frd=1`;
+	const viewerFor = (url) => `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent(url)}`;
+	{
+		// Asked to open the file page's own tab, with no PDF named (the Free
+		// model did, and was told no PDF address could be determined): the
+		// page's one file is the PDF.
+		const h = harness([{ ...native, index: 4, url: `${coursePage}?module_item_id=5` }], { savedAddresses: [downloadLink], webPages: { [`${coursePage}?module_item_id=5`]: { embeddedPdfUrl: downloadLink } } });
+		const result = await h.open({ tabId: 1, active: false });
+		assert.deepEqual(h.updated, [{ id: 100, url: viewerFor(downloadLink) }], "the file opens in a viewer tab of its own");
+		assert.equal(h.tabs.get(1).url, `${coursePage}?module_item_id=5`, "the file page stays as it was");
+		assert.equal(result.tab.id, 100);
+		assert.equal(h.installed.length, 0);
+	}
+	{
+		// A web page with no one file to open still says why.
+		const h = harness([{ ...native, url: coursePage }], { webPages: { [coursePage]: { embeddedPdfUrl: "" } } });
+		await assert.rejects(h.open({ tabId: 1 }), /^Error: Could not determine a PDF URL for the Onhand viewer/);
+		assert.equal(h.installed.length + h.created.length + h.updated.length, 0);
+	}
+	{
+		// A PDF named by the caller is never swapped for the page's own.
+		const h = harness([{ ...native, url: coursePage }], { webPages: { [coursePage]: { embeddedPdfUrl: downloadLink } } });
+		await assert.rejects(h.open({ tabId: 1, pdfUrl: "not a url" }), /Could not determine a PDF URL|Invalid|pdfUrl/);
+		assert.equal(h.created.length + h.updated.length, 0);
+	}
+	for (const args of [{ tabId: 1 }, { tabId: 1, newTab: true, active: false }]) {
+		// The link says it downloads: no tab is ever sent to it.
+		const h = harness([{ ...native, index: 4, url: coursePage }], { savedAddresses: [downloadLink], viewerTitle: "Graph Notes.pdf - Onhand PDF Viewer" });
+		const result = await h.open({ ...args, pdfUrl: downloadLink });
+		assert.equal(result.tab.title, "Graph Notes.pdf - Onhand PDF Viewer", "the tab is reported under the file's name, not \"download\"");
+		assert.deepEqual(h.created, [{ url: "about:blank", active: args.active !== false, windowId: 1, index: 5 }], "the viewer gets a tab of its own beside the page");
+		assert.deepEqual(h.updated, [{ id: 100, url: viewerFor(downloadLink) }], "only the new tab is sent anywhere, and only to the viewer");
+		assert.deepEqual(h.grants, [{ id: 100, url: downloadLink }], "the viewer tab may ask for the file signed in as the reader");
+		assert.equal(h.tabs.get(1).url, coursePage, "the course page stays as it was");
+		assert.equal(h.installed.length, 0, "no viewer is laid over the course page");
+		assert.deepEqual([h.inferred, h.selectionProbes], [[], []], "a page that only links to the PDF holds no reading position or selection");
+		assert.equal(result.tab.id, 100);
+		assert.equal(result.tab.url, viewerFor(downloadLink));
+		assert.deepEqual([result.opened, result.alreadyOpen, result.replacedCurrentTab, result.savedAddress], [true, false, false, true]);
+		assert.deepEqual(h.viewerWaits, [{ id: 100, pdfUrl: downloadLink }], "the open waits for the viewer to load this PDF");
+		assert.equal(typeof h.tabWaits.at(-1)?.showing, "function", "and for the tab to show the viewer");
+	}
+	{
+		// Asked for again: the viewer tab already showing it is used.
+		const h = harness([{ ...native, url: coursePage }, { id: 2, windowId: 1, active: false, url: viewerFor(downloadLink) }], { savedAddresses: [downloadLink] });
+		const result = await h.open({ tabId: 1, pdfUrl: downloadLink, active: false });
+		assert.equal(result.tab.id, 2);
+		assert.deepEqual([result.opened, result.alreadyOpen], [false, true]);
+		assert.equal(h.created.length + h.updated.length, 0);
+	}
+	{
+		// With no source tab the blank tab Onhand opened for the PDF becomes the viewer: one tab, not two.
+		const h = harness([{ ...native, url: coursePage }], { savedAddresses: [downloadLink] });
+		const result = await h.open({ pdfUrl: downloadLink, newTab: true });
+		assert.equal(h.created.length, 1);
+		assert.equal(result.tab.id, 100);
+		assert.equal(h.tabs.get(100).url, viewerFor(downloadLink));
+		assert.deepEqual(h.grants, [{ id: 100, url: downloadLink }]);
+		assert.equal(h.tabs.get(1).url, coursePage);
+	}
+	const plainLink = "https://lms.example.edu/mod/resource/view.php?id=77";
+	{
+		// A link that does not say so, sent to the tab: the tab is still on the page afterwards, so the viewer opens beside it.
+		const h = harness([{ ...native, index: 0, url: coursePage }], { savedAddresses: [plainLink] });
+		const result = await h.open({ tabId: 1, pdfUrl: plainLink });
+		assert.deepEqual(h.updated.map(({ id, url }) => ({ id, url })), [{ id: 1, url: plainLink }, { id: 100, url: viewerFor(plainLink) }]);
+		assert.equal(h.tabs.get(1).url, coursePage);
+		assert.equal(h.installed.length, 0, "the viewer is never laid over a page that is not showing the PDF");
+		assert.equal(result.tab.id, 100);
+		assert.equal(result.savedAddress, true);
+		assert.deepEqual(h.removed, [], "the reader's tab is left alone");
+	}
+	{
+		// Opened in a new tab instead: that tab closes itself, and the viewer opens in another.
+		const h = harness([{ ...native, url: coursePage }], { savedAddresses: [plainLink] });
+		const result = await h.open({ tabId: 1, pdfUrl: plainLink, newTab: true, active: false });
+		assert.deepEqual(h.created.map((tab) => tab.url), [plainLink, "about:blank"]);
+		assert.equal(result.tab.id, 101);
+		assert.equal(h.tabs.get(101).url, viewerFor(plainLink));
+		assert.equal(h.installed.length, 0);
+	}
+	{
+		// The saved file is not a PDF: no tab holding only an error is left behind.
+		const h = harness([{ ...native, url: coursePage }], { savedAddresses: [downloadLink], viewerLoadError: "Onhand PDF viewer failed to load the PDF: Invalid PDF structure." });
+		await assert.rejects(h.open({ tabId: 1, pdfUrl: downloadLink }), /Invalid PDF structure\. This address is a download link rather than a page/);
+		assert.deepEqual(h.removed, [100]);
+		assert.equal(h.tabs.get(1).url, coursePage);
+	}
+	{
+		// A viewer that is only slow keeps its tab.
+		const h = harness([{ ...native, url: coursePage }], { savedAddresses: [downloadLink], viewerLoadError: "Timed out waiting for Onhand PDF viewer to finish rendering." });
+		const result = await h.open({ tabId: 1, pdfUrl: downloadLink });
+		assert.equal(result.viewerReady.ok, false);
+		assert.deepEqual(h.removed, []);
+	}
+	{
+		// A tab already at an address that looks like a download link is the PDF: the viewer goes over it as before.
+		const h = harness([{ ...native, url: downloadLink }]);
+		const result = await h.open({ tabId: 1 , pdfUrl: downloadLink });
+		assert.equal(result.tab.id, 1);
+		assert.deepEqual(h.installed.map(({ id, url }) => ({ id, url })), [{ id: 1, url: downloadLink }]);
+		assert.equal(h.created.length, 0);
+	}
 	await assertTabWaitsFollowTheNavigation(source);
 	await assertViewerTabReadinessUsesTheViewerPort(source);
-	console.log("PDF tab handoff: native/inline/standalone reuse, page preservation, distinct URLs, window isolation, Docs and file gates, Firefox viewer fallbacks, web pages at PDF-looking addresses, tab waits that follow the navigation, viewer readiness over its port passed");
+	console.log("PDF tab handoff: native/inline/standalone reuse, page preservation, distinct URLs, window isolation, Docs and file gates, Firefox viewer fallbacks, web pages at PDF-looking addresses, download links, tab waits that follow the navigation, viewer readiness over its port passed");
 }
 
 function productionFunctions(source, names) {
@@ -354,7 +480,7 @@ async function assertViewerTabReadinessUsesTheViewerPort(source) {
 			return debuggerAnswer;
 		};
 		const delay = (ms) => new Promise((resolve) => setTimeout(resolve, Math.min(ms, 5)));
-		const api = new Function("chrome", "callOnhandPdfViewerFrameViaRuntimePort", "evaluateInTab", "delay", `${functions}\nreturn { waitForOnhandPdfViewerReady };`)(chrome, callOnhandPdfViewerFrameViaRuntimePort, evaluateInTab, delay);
+		const api = new Function("chrome", "callOnhandPdfViewerFrameViaRuntimePort", "evaluateInTab", "delay", `const ONHAND_PDF_VIEWER_SLOW_SITE_READY_TIMEOUT_MS = 70000; const ONHAND_PDF_VIEWER_FETCHING_FROM_SITE_ATTRIBUTE = "data-onhand-pdf-fetching-from-site";\n${functions}\nreturn { waitForOnhandPdfViewerReady };`)(chrome, callOnhandPdfViewerFrameViaRuntimePort, evaluateInTab, delay);
 		return { ...api, portCalls, debuggerCalls };
 	};
 	const noPort = new Error("No Onhand PDF viewer runtime port found");
@@ -379,6 +505,22 @@ async function assertViewerTabReadinessUsesTheViewerPort(source) {
 		const h = build({ portAnswers: [{ ready: true }], hasDebugger: true });
 		assert.equal((await h.waitForOnhandPdfViewerReady(7, 2000, pdf)).ok, true);
 		assert.equal(h.debuggerCalls.length, 0);
+	}
+	{
+		// The viewer has given up on a web PDF: the wait ends at once with its
+		// message. It used to sit out the timeout, and the tab command timed
+		// out first ("Timed out waiting for page command").
+		const h = build({ portAnswers: [{ ready: false, error: "Invalid PDF structure." }], hasDebugger: true });
+		const startedAt = Date.now();
+		await assert.rejects(h.waitForOnhandPdfViewerReady(7, 5000, pdf), /^Error: Onhand PDF viewer failed to load the PDF: Invalid PDF structure\.$/);
+		assert.ok(Date.now() - startedAt < 1000, "no waiting for a viewer that has failed");
+		assert.equal(h.portCalls.length, 1);
+	}
+	{
+		// A local file's viewer may be asking the reader to choose the file: that wait goes on.
+		const h = build({ portAnswers: [{ ready: false, error: "Choose notes.pdf, or drop it here, to open it in Onhand." }, { ready: true }], hasDebugger: false });
+		assert.equal((await h.waitForOnhandPdfViewerReady(7, 2000, "file:///Users/me/notes.pdf")).ok, true);
+		assert.equal(h.portCalls.length, 2);
 	}
 	{
 		// Chrome, port not connected: the debugger still reads the viewer page.

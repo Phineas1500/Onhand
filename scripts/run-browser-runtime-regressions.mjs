@@ -1464,6 +1464,16 @@ async function assertSentryDiagnosticsGateAndScrub() {
 				message: "This tab is a web page, not a PDF file, although its address looks like one, so it was not opened in Onhand's PDF viewer.",
 			},
 			{
+				label: "voice navigation to a link the browser saves as a file",
+				messageType: "sidebar:realtime-browser-tool",
+				message: "That address did not open a page: the browser saves it as a file (it is most likely in the reader's Downloads now), so there is nothing to read in a tab. If the file is a PDF, open the address with browser_open_pdf_in_onhand_viewer (pdfUrl). Otherwise tell the reader the file was downloaded.",
+			},
+			{
+				label: "voice PDF open on a download link that is not a PDF",
+				messageType: "sidebar:realtime-browser-tool",
+				message: "Onhand PDF viewer failed to load the PDF: Invalid PDF structure. This address is a download link rather than a page, so there is no tab to read it from either.",
+			},
+			{
 				label: "voice figure miss",
 				messageType: "sidebar:realtime-browser-tool",
 				message: 'No image or figure matched "diagram". Figures on this page include: "Schematic".',
@@ -1507,6 +1517,17 @@ async function assertSentryDiagnosticsGateAndScrub() {
 				label: "dead PDF link",
 				messageType: "pdf-viewer:load-authorized-source",
 				message: "The authenticated browser tab could not load the PDF (HTTP 404).",
+			},
+			{
+				label: "expired PDF link with no copy left in the browser",
+				messageType: "pdf-viewer:load-authorized-source",
+				message:
+					"This PDF's link has stopped working (the file host answered HTTP 403) and the browser kept no copy Onhand could use. Download links often expire: open the PDF again from the page that links to it, then ask again.",
+			},
+			{
+				label: "expired PDF link that shows an error page",
+				messageType: "pdf-viewer:load-authorized-source",
+				message: "This link did not return a PDF (the file host answered HTTP 403). Download links often expire: reload the page that links to it and open the PDF from there.",
 			},
 			{
 				label: "Voice without an OpenAI key",
@@ -1602,6 +1623,28 @@ async function assertSentryDiagnosticsGateAndScrub() {
 			await new Promise((resolve) => setTimeout(resolve, 50));
 		}
 		assert.match(fetchCalls.map((call) => call.body).join("\n"), /"auth_page":"auth\.openai\.com\/log-in\/password"/);
+		assert.match(fetchCalls.map((call) => call.body).join("\n"), /"error_kind":"auth"/, "a sign-in failure is still labelled as one");
+
+		// The label names the cause. Advice to use an API key, and the PDF
+		// loader's name ("the authenticated browser tab"), used to make an
+		// unreachable free tier, a usage cap and a refused PDF read as sign-in
+		// failures.
+		const labelCases = [
+			["sidebar:submit-prompt", "Could not reach the Onhand free tier. Check your connection, or switch to your own API key in options.", "network"],
+			["pdf-viewer:load-authorized-source", "The authenticated browser tab could not load the PDF (HTTP 403).", "network"],
+			["pdf-viewer:load-authorized-source", "The authenticated browser tab returned a non-PDF response.", "network"],
+			["sidebar:submit-prompt", "Onhand free tier registration failed (429). Try again later, or use your own API key.", "quota"],
+		];
+		for (const [messageType, message, expected] of labelCases) {
+			const marker = message.slice(0, 40);
+			const landed = () => fetchCalls.map((call) => String(call.body)).find((body) => body.includes(marker));
+			const labelled = await runtime.captureRuntimeException({ messageType, message, stack: `Error: ${message}\n    at smoke (${extensionFrame})` });
+			assert.equal(labelled.captured, true, `expected capture for: ${marker}`);
+			for (let attempt = 0; attempt < 40 && !landed(); attempt += 1) {
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+			assert.match(landed() || "", new RegExp(`"error_kind":"${expected}"`), `${marker}… is labelled ${expected}`);
+		}
 
 		// Unpacked builds report to the development environment.
 		fetchCalls.length = 0;
@@ -3758,8 +3801,8 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 	);
 	assert.match(
 		background,
-		/async function withTabCommand\(tabId, fn, timeoutMs = TAB_COMMAND_TIMEOUT_MS\) \{[\s\S]*?const scheduledTask = withOperationTimeout\(\s*previousTask\s*\.catch\(\(\) => \{\}\)\s*\.then\(\(\) => \{[\s\S]*?return Promise\.resolve\(\)\.then\(fn\);\s*\}\),\s*timeoutMs,/,
-		"tab command queues should time out the wait behind a prior page command, not only the command body",
+		/async function withTabCommand\(tabId, fn, timeoutMs = TAB_COMMAND_TIMEOUT_MS\) \{[\s\S]*?const scheduledTask = withOperationTimeout\(\s*previousTask\s*\.catch\(\(\) => \{\}\)\s*\.then\(\(\) => \{[\s\S]*?return wakeFrozenTab\(tabId\)\.then\(\(\) => fn\(\)\);\s*\}\),\s*timeoutMs,/,
+		"tab command queues should time out the wait behind a prior page command (and the wake of a frozen tab), not only the command body",
 	);
 	const corpusCommandCase = background.match(/case "search_linked_pdf_corpus": \{[\s\S]*?(?=\n\t\tcase "activate_tab")/)?.[0] || "";
 	const corpusTabCommandEnd = corpusCommandCase.indexOf("// Only DOM access belongs");
@@ -3806,7 +3849,7 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 	);
 	assert.match(
 		background,
-		/const createdTab = await chrome\.tabs\.create\([\s\S]{0,500}createdNewTab: true,[\s\S]{0,120}reusedExistingTab: false/,
+		/const createdTab = await chrome\.tabs\.create\([\s\S]{0,1000}createdNewTab: true,[\s\S]{0,120}reusedExistingTab: false/,
 		"new navigation targets should be identified as request-created tabs",
 	);
 	assert.match(
@@ -4634,6 +4677,28 @@ async function assertConstitutionPromptContract() {
 		assert.equal(compactBusyTabs.shownTabs.some((tab) => tab.id === 51), true, "the compact context should include a relevant tab beyond position eight");
 		assert.equal(compactBusyTabs.shownTabs.some((tab) => tab.id === 99), true, "the compact context should include a related tab from another window");
 		assert.equal(compactBusyTabs.omittedCount, 40, "compact context should disclose how many ranked metadata rows were omitted");
+		// Links in a page's collapsed sections come as a list of their own, after the text.
+		const collapsedLinks = {
+			sections: [
+				{ title: "Motion Planning", links: [{ text: "Graph Search Notes.pdf", url: "https://canvas.example.edu/courses/7/modules/items/11" }] },
+				{ title: "", links: [{ text: "Stray", url: "https://canvas.example.edu/x" }] },
+				{ title: "Empty", links: [] },
+			],
+			total: 2,
+			omitted: 4,
+		};
+		const coursePageTab = { id: 7, title: "CS 3410", url: "https://canvas.example.edu/courses/7" };
+		const visibleWithCollapsed = formatToolResultForModel("browser_get_visible_text", { tab: coursePageTab, visible: { blocks: [{ text: "Course Modules" }], collapsedLinks } });
+		assert.match(visibleWithCollapsed, /Course Modules[\s\S]*\n\nLinks inside collapsed sections of this page \(the reader has not expanded them[^\n]*browser_open_pdf_in_onhand_viewer \(pdfUrl, newTab true, active false\)[^\n]*\nMotion Planning:\n- Graph Search Notes\.pdf — https:\/\/canvas\.example\.edu\/courses\/7\/modules\/items\/11\n\(unnamed section\):\n- Stray — https:\/\/canvas\.example\.edu\/x\n\(4 more links are not listed\.\)$/);
+		assert.doesNotMatch(visibleWithCollapsed, /Empty:/);
+		const readableWithCollapsed = formatToolResultForModel("browser_extract_content", { tab: coursePageTab, content: { markdown: "# CS 3410\n\n## Motion Planning", text: "# CS 3410\n\n## Motion Planning", collapsedLinks } });
+		assert.match(readableWithCollapsed, /Links inside collapsed sections of this page[\s\S]*Motion Planning:\n- Graph Search Notes\.pdf/);
+		assert.doesNotMatch(
+			formatToolResultForModel("browser_extract_content", { tab: coursePageTab, content: { markdown: "More", text: "More", startBlock: 40, pagingSupported: true, collapsedLinks } }),
+			/collapsed sections/,
+			"a later page of a long read does not repeat the list",
+		);
+		assert.doesNotMatch(formatToolResultForModel("browser_get_visible_text", { tab: coursePageTab, visible: { blocks: [{ text: "Course Modules" }] } }), /collapsed sections/);
 		const completeTabInventoryText = formatToolResultForModel("browser_list_tabs", { tabs: busyWindowTabs });
 		assert.match(completeTabInventoryText, /Unrelated tab 54/, "browser_list_tabs should return the complete inventory beyond the old 40-tab cap");
 	const scannedPdfSearchText = formatToolResultForModel("browser_pdf_search", {
@@ -12474,6 +12539,140 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	);
 	assert.equal(selectionRanked[1].id, 2, "selection concepts should rank the relevant lecture ahead of a generic course lecture");
 
+	// A homework handout saved under a bare file name shares no word with its
+	// course page, but both name the course. With the course page and the notes
+	// open, "explain X" on the handout was answered from the handout alone; the
+	// reader had to name the notes.
+	const courseTabs = [
+		{ id: 1, windowId: 1, index: 0, active: true, title: "hw3_2 (1).pdf - Onhand PDF Viewer", url: "chrome-extension://onhand/pdf-viewer.html?url=file%3A%2F%2F%2Fhw3_2.pdf" },
+		{ id: 2, windowId: 1, index: 1, active: false, title: "Inbox (3) - Mail", url: "https://mail.example.test/" },
+		{ id: 3, windowId: 1, index: 2, active: false, title: "FALL 2026 exam schedule", url: "https://registrar.example.edu/exams" },
+		{ id: 4, windowId: 1, index: 3, active: false, title: "CS 3410 Foundations of Planning (2026FA)", url: "https://canvas.example.edu/courses/20417" },
+		{ id: 5, windowId: 1, index: 4, active: false, title: "Graph Search Notes.pdf: CS 3410 Foundations of Planning (2026FA)", url: "https://canvas.example.edu/courses/20417/files/5550123" },
+	];
+	const courseState = { windows: [{ id: 1, focused: true, tabs: courseTabs }] };
+	const handoutText = "CS 3410 / MAE 3460: Homework 3.2\nFALL 2026\nUse the ComputePath procedure from lecture to find a path.";
+	const courseRanked = test.rankOpenTabCandidatesForTest(courseState, courseTabs[0], "Explain the ComputePath procedure", handoutText);
+	assert.deepEqual(courseRanked.slice(1, 3).map((tab) => tab.id).sort(), [4, 5], "tabs that name the handout's course come first");
+	assert.deepEqual(courseRanked.filter((tab) => tab.sharedCode).map((tab) => [tab.id, tab.sharedCode]), [[4, "CS 3410"], [5, "CS 3410"]].sort((a, b) => courseRanked.findIndex((tab) => tab.id === a[0]) - courseRanked.findIndex((tab) => tab.id === b[0])), "and say which code they share");
+	assert.ok(courseRanked.find((tab) => tab.id === 4).relevanceScore >= 12, "strong enough to count as a Learning workspace candidate");
+	assert.equal(courseRanked.find((tab) => tab.id === 3).sharedCode, undefined, "a term (FALL 2026) is not a code");
+	assert.equal(courseRanked[0].sharedCode, undefined, "the active tab is not compared with itself");
+	assert.equal(test.rankOpenTabCandidatesForTest(courseState, courseTabs[0], "Explain the ComputePath procedure").some((tab) => tab.sharedCode), false, "nothing is shared when the page names no code");
+	assert.equal(test.summarizeOpenTabsForTest(courseState, courseTabs[0], "Explain the ComputePath procedure", 16, handoutText).shownTabs[1].sharedCode, "CS 3410");
+
+	// The Free model followed neither the rule nor the label: it read the
+	// handout, marked it and answered from the line it restates. Before its
+	// first mark on the page it began on, the turn is sent to the open tabs
+	// that name the same course, once.
+	const courseSummary = test.summarizeOpenTabsForTest(courseState, courseTabs[0], "Explain the ComputePath procedure", 16, "");
+	assert.deepEqual(courseSummary.workspaceTabs.map((tab) => tab.id).sort(), [2, 3, 4, 5], "the other tabs are kept for the turn, with their titles and addresses");
+	assert.deepEqual(Object.keys(courseSummary.workspaceTabs[0]).sort(), ["id", "title", "url"]);
+	assert.equal(test.summarizeOpenTabsForTest(courseState, courseTabs[0], "x", 16, handoutText).activePageText, handoutText);
+	const handoutRead = { state: "complete", toolName: "browser_pdf_read_pages", resultDetails: { tab: { id: 1, url: courseTabs[0].url } }, resultSummary: handoutText };
+	const materialRequest = (overrides = {}) => ({
+		displayPrompt: "Explain the ComputePath procedure",
+		initialActiveTab: courseTabs[0],
+		initialActiveUrl: courseTabs[0].url,
+		// A PDF in the browser's own viewer: nothing was readable when the turn began.
+		openTabSummary: { ...courseSummary, workspaceTabs: [...courseTabs.slice(1), { id: 9, title: "MATH 2210 Linear Algebra", url: "https://canvas.example.edu/courses/90001" }] },
+		toolTraces: [handoutRead],
+		...overrides,
+	});
+	const materialGuard = (request, command = "highlight_text") => test.buildReferredMaterialFirstGuardResultForTest(`browser_${command}`, command, request.displayPrompt, request);
+	const sent = materialGuard(materialRequest());
+	assert.equal(sent?.guardrail?.kind, "referred_material_first");
+	assert.match(sent.guardrail.message, /these tabs, most likely first: tabId 4, tabId 5 \(/, "the tabs that name the handout's course, and no other (not the mail, the exam schedule or another course)");
+	assert.doesNotMatch(sent.guardrail.message, /ComputePath|Planning|canvas\.example/, "the message carries no page text, titles or addresses");
+	assert.equal(materialGuard(materialRequest(), "show_note"), null, "only a first highlight is held");
+	assert.equal(materialGuard(materialRequest(), "pdf_read_pages"), null);
+	// The model marks a page with several highlight calls in one round: all of
+	// them wait (holding only the first let the least relevant marks through).
+	const heldOnce = { state: "error", toolName: "browser_highlight_text", resultDetails: { guardrail: { kind: "referred_material_first" } } };
+	const round = materialRequest({ modelCallCount: 3 });
+	assert.equal(materialGuard(round)?.guardrail?.kind, "referred_material_first");
+	round.toolTraces.push(heldOnce);
+	assert.match(materialGuard(round).guardrail.message, /^Held with the other marks on this page/, "the round's other highlight calls are held with it");
+	round.toolTraces.push(heldOnce);
+	round.modelCallCount = 4;
+	assert.equal(materialGuard(round), null, "what the model does once it has seen the message is its own choice");
+	const noRounds = materialRequest();
+	for (let call = 0; call < 8; call += 1) {
+		assert.equal(materialGuard(noRounds)?.guardrail?.kind, "referred_material_first");
+		noRounds.toolTraces.push(heldOnce);
+	}
+	assert.equal(materialGuard(noRounds), null, "where rounds are not counted, the hold still ends");
+	// The owner's own turn (2026-11-21, Sol): the model read the course page,
+	// got module names, and went back to mark the homework. A page that lists
+	// the material is not the material.
+	const courseRead = (resultSummary, toolName = "browser_extract_content", tab = courseTabs[3]) => ({ state: "complete", toolName, resultDetails: { tab: { id: tab.id, url: tab.url } }, resultSummary });
+	const afterReading = (...reads) => materialGuard(materialRequest({ toolTraces: [handoutRead, ...reads] }));
+	const listingHeld = afterReading(courseRead("# CS 3410\n\n## Course Modules\n\n## Motion Planning\n\n## Control"));
+	assert.equal(listingHeld?.guardrail?.kind, "referred_material_first", "reading the course page is not reading the notes");
+	assert.match(listingHeld.guardrail.message, /tabId 4 has been read, but a course page, module list or folder only lists the material: it is not the notes\./);
+	assert.match(listingHeld.guardrail.message, /open the notes or slides for this topic from the links in that read \(links inside collapsed sections are listed after the page text/);
+	assert.match(listingHeld.guardrail.message, /Other open tabs that may hold the material: tabId 5\./);
+	assert.doesNotMatch(listingHeld.guardrail.message, /ComputePath|Planning|Motion Planning|canvas\.example/, "still no page text, titles or addresses");
+	assert.equal(
+		afterReading(courseRead("# CS 3410\n\n## Motion Planning\n\nLinks inside collapsed sections of this page (the reader has not expanded them): \nMotion Planning:\n- ComputePath Notes.pdf — https://canvas.example.edu/courses/20417/modules/items/7"))?.guardrail?.kind,
+		"referred_material_first",
+		"a link named for the topic in a collapsed section is still only a link",
+	);
+	assert.equal(afterReading(courseRead("Lecture 12 notes\n\nThe ComputePath procedure expands the vertex with the smallest f."), courseRead("# CS 3410\n\n## Motion Planning")), null, "a page that says something about what was asked is the material");
+	assert.equal(afterReading(courseRead("# CS 3410\n\n## Motion Planning"), courseRead("PDF search: 0 matches", "browser_pdf_search", courseTabs[4])), null, "so is another PDF, whatever it holds");
+	const problemAfter = (...reads) => materialGuard(materialRequest({ displayPrompt: "Help me solve problem 1", toolTraces: [handoutRead, ...reads] }));
+	assert.equal(problemAfter(courseRead("Lecture 12 notes\n\nBest-first search keeps an OPEN list.")), null, "a question that names no topic: a page read elsewhere counts");
+	assert.equal(
+		problemAfter(courseRead("# CS 3410\n\n## Motion Planning\n\nLinks inside collapsed sections of this page (the reader has not expanded them): \nMotion Planning:\n- Notes.pdf — https://canvas.example.edu/courses/20417/modules/items/7"))?.guardrail?.kind,
+		"referred_material_first",
+		"unless it came with a list of collapsed links",
+	);
+	assert.equal(materialGuard(materialRequest({ displayPrompt: "When is this due?" })), null, "a question the pointer has nothing to do with");
+	assert.equal(materialGuard(materialRequest({ displayPrompt: "What does expanded mean here?" })), null, "a word of the question must sit beside the pointer");
+	assert.equal(materialGuard(materialRequest({ displayPrompt: "Help me solve problem 1" }))?.guardrail?.kind, "referred_material_first", "help with a problem on a page that points to lecture");
+	assert.equal(materialGuard(materialRequest({ toolTraces: [{ ...handoutRead, resultSummary: "CS 3410 Homework 3.2\nRun the ComputePath procedure on the graph below." }] })), null, "a page that points nowhere");
+	assert.equal(
+		materialGuard(materialRequest({ toolTraces: [{ ...handoutRead, resultSummary: "CS 3410 notes. The ComputePath procedure, as described in Section 3 and in the class of best-first methods, expands one vertex at a time." }] })),
+		null,
+		"a document's own sections, and \"the class of\", are not course material",
+	);
+	const withTabs = (tabs, overrides = {}) => materialRequest({ openTabSummary: { ...courseSummary, workspaceTabs: tabs }, ...overrides });
+	const idsSent = (request) => (materialGuard(request)?.guardrail?.message.match(/tabId \d+/g) || []).map((id) => Number(id.slice(6)));
+	assert.equal(materialGuard(withTabs([{ id: 9, title: "MATH 2210 Linear Algebra", url: "https://canvas.example.edu/courses/90001" }, courseTabs[1], { id: 12, title: "Campus dining", url: "https://canvas.example.edu/dining/menus" }])), null, "no open tab belongs to the course");
+	// The notes opened from the course page: their own title names no course.
+	const notesViewer = { id: 6, title: "Graph Search Notes.pdf - Onhand PDF Viewer", url: `chrome-extension://onhand/pdf-viewer.html?url=${encodeURIComponent("https://canvas.example.edu/courses/20417/files/5550123/download?download_frd=1")}` };
+	const otherCourseFile = { id: 7, title: "Syllabus.pdf - Onhand PDF Viewer", url: `chrome-extension://onhand/pdf-viewer.html?url=${encodeURIComponent("https://canvas.example.edu/courses/90001/files/5/download?download_frd=1")}` };
+	assert.deepEqual(idsSent(withTabs([otherCourseFile, notesViewer, courseTabs[3]])), [4, 6], "a file from the same course site follows the course page; another course's file does not");
+	assert.deepEqual(idsSent(withTabs([notesViewer])), [6], "with the course page closed, a PDF titled like course material is still a candidate");
+	assert.deepEqual(idsSent(withTabs([{ id: 8, title: "Release notes - Acme", url: "https://acme.example.test/releases" }, { id: 10, title: "Lecture 7 slides.pdf", url: "https://files.example.test/lec7.pdf" }])), [10], "a web page that merely says notes is not");
+	assert.deepEqual(idsSent(withTabs([{ id: 11, title: "ComputePath walkthrough", url: "https://blog.example.test/computepath" }])), [11], "a tab named for what is asked");
+	assert.equal(
+		materialGuard(materialRequest({ toolTraces: [], openTabSummary: { ...courseSummary, activePageText: handoutText } }))?.guardrail?.kind,
+		"referred_material_first",
+		"the page's text from the start of the turn counts too",
+	);
+	assert.match(materialGuard(withTabs([courseTabs[3]])).guardrail.message, /read tabId 4 \(/);
+	// Page 2 of a homework headed on page 1 names no course: a tab on a course
+	// site is then the place to look, whatever it is called.
+	const pageTwo = "(d) Run the search on this graph with the ComputePath procedure from lecture.";
+	const pageTwoRequest = (tabs) => withTabs(tabs, { initialActiveTab: { ...courseTabs[0], title: "hw3_2 (1).pdf" }, toolTraces: [{ ...handoutRead, resultSummary: pageTwo }] });
+	const mathCourse = { id: 9, title: "MATH 2210 Linear Algebra", url: "https://canvas.example.edu/courses/90001" };
+	assert.deepEqual(idsSent(pageTwoRequest([courseTabs[1], courseTabs[3], mathCourse, { id: 12, title: "Campus dining", url: "https://canvas.example.edu/dining/menus" }])), [4, 9], "tabs on a course site, not the same site's other pages");
+	assert.deepEqual(idsSent(pageTwoRequest([{ id: 13, title: "Planning", url: "https://moodle.example.edu/course/view.php?id=7" }, { id: 14, title: "Course catalog", url: "https://example.edu/catalog" }])), [13]);
+	assert.equal(materialGuard(withTabs([mathCourse])), null, "a course site tab that names another course than the page's is not one");
+	for (const [address, expected] of [
+		["https://canvas.example.edu/courses/20417", true],
+		["https://canvas.example.edu/courses/20417/modules", true],
+		["https://moodle.example.edu/course/view.php?id=7", true],
+		["https://piazza.com/class/abc123", true],
+		["https://canvas.example.edu/dining/menus", false],
+		["https://example.edu/courses", false],
+		["chrome-extension://onhand/pdf-viewer.html?url=x", false],
+		["file:///Users/a/courses/x/hw.pdf", false],
+	]) {
+		assert.equal(test.isCourseSiteUrlForTest(address), expected, address);
+	}
+
 	const handoffRequest = {
 		toolTraces: [
 			{
@@ -12496,10 +12695,15 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	// now ~0.1-0.3 s).
 	const { readFile: readSourceFile } = await import("node:fs/promises");
 	const runtimeSourceText = await readSourceFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
+	assert.match(runtimeSourceText, /const sharedLabel = tab\.sharedCode \? ` \[names \$\{tab\.sharedCode\}, as the active page does\]` : "";/, "the tab list tells the model which tabs name the same course");
+	assert.match(runtimeSourceText, /summarizeOpenTabs\(state, activeTab, workspaceQuery, OPEN_TAB_CONTEXT_LIMIT, activePageText\)/);
+	assert.equal((runtimeSourceText.match(/buildReferredMaterialFirstGuardResult\(toolName, commandName, prompt, activeRequest\) \|\|/g) || []).length, 2, "both tool pipelines hold the first mark for the course material");
+	assert.match(runtimeSourceText, /- A page that points elsewhere for what the user asks about has not settled the answer: [^\n]*read it without being asked[^\n]*The user should never have to name the notes/, "a page that defers to lecture or notes sends the model to them");
 	assert.match(runtimeSourceText, /sourceWasOpenedByThisRequest \? \{ \.\.\.backgroundParams, newTab: false, freshBackgroundSource: true \}/);
 	const backgroundSourceText = await readSourceFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8");
 	assert.match(backgroundSourceText, /const freshBackgroundSource = args\.freshBackgroundSource === true && sourceTab\?\.active === false;/, "only an unvisited background tab skips the probes");
-	assert.match(backgroundSourceText, /if \(!initialSelectionHandoff && args\.disableSelectionHandoff !== true && !freshBackgroundSource\)/);
+	assert.match(backgroundSourceText, /const noPdfInSourceTab = freshBackgroundSource \|\| savedAddressOpen;/, "nor does the page a download link was on");
+	assert.match(backgroundSourceText, /if \(!initialSelectionHandoff && args\.disableSelectionHandoff !== true && !noPdfInSourceTab\)/);
 	assert.match(backgroundSourceText, /if \(Date\.now\(\) - startedAt < INLINE_VIEWER_PORT_GRACE_MS\) \{\s*await delay\(100\);\s*continue;/, "the runtime port gets a head start before the frame bridge");
 	// A hidden viewer document has no frame to wait for and Chrome clamps its
 	// timers to 1 s, so post-scroll waits yield a message-channel task there

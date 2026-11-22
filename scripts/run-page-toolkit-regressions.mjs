@@ -177,9 +177,9 @@ async function assertRemoveAnnotationsTargetsSingleMarks() {
 // what it holds and, when that is a web page, asks the address what it
 // returns, before laying the PDF viewer over it.
 async function assertWebPageAtPdfAddressIsRecognised() {
-	const names = ["isHttpLikeUrl", "isFileUrl", "isLikelyPdfResourceUrl", "stripUrlHash", "probeAddressIsPdf", "describeWebPageAtPdfAddress"];
+	const names = ["isHttpLikeUrl", "isFileUrl", "isLikelyPdfResourceUrl", "isDownloadLinkUrl", "stripUrlHash", "probeAddressIsPdf", "describeWebPageAtPdfAddress"];
 	const declarations = await Promise.all(names.map((name) => loadBackgroundFunction(name)));
-	const make = ({ page, response }) => {
+	const make = ({ page, response, responses = null }) => {
 		const fetched = [];
 		const helpers = new Function(
 			"executeScriptInTab",
@@ -196,6 +196,7 @@ async function assertWebPageAtPdfAddressIsRecognised() {
 			(promise) => promise,
 			async (url, init) => {
 				fetched.push({ url, init });
+				if (responses) return (responses[url] || html)();
 				if (response instanceof Error) throw response;
 				return response();
 			},
@@ -233,6 +234,36 @@ async function assertWebPageAtPdfAddressIsRecognised() {
 	assert.equal(page.fetched[0].init.headers.Range, "bytes=0-1023", "only the head of the answer is needed");
 	assert.deepEqual(await make({ page: webPage([{ url: "https://ads.example.test/banner.html", typed: false, area: 950000 }]), response: html }).describeWebPageAtPdfAddress(tab, wrapper), { embeddedPdfUrl: "" });
 
+	// A file page: a course site's page about one file. The link named
+	// "Notes.pdf" on the course page leads here, the page holds no PDF, and its
+	// one download link is the file. (The model opened the file page as a PDF,
+	// was refused, and spent four more steps finding the link by hand.)
+	const filePage = "https://canvas.example.edu/courses/7/files/42?module_item_id=5";
+	const fileLink = "https://canvas.example.edu/courses/7/files/42/download?download_frd=1";
+	const fileTab = { id: 6, url: filePage };
+	const withLinks = (links, responses = { [fileLink]: pdf }) => make({ page: { ...webPage(), links }, responses });
+	const onePdf = withLinks([{ url: fileLink, download: false }, { url: `${fileLink}#again`, download: false }, { url: "https://canvas.example.edu/courses/7/downloads-policy", download: false }]);
+	assert.deepEqual(await onePdf.describeWebPageAtPdfAddress(fileTab, filePage), { embeddedPdfUrl: fileLink }, "the page's one download link, when it is a PDF");
+	assert.deepEqual(onePdf.fetched.map((entry) => entry.url), [filePage, fileLink], "only that link is asked what it returns");
+	assert.deepEqual(
+		await withLinks([{ url: "https://canvas.example.edu/files/notes-v2", download: true }], { "https://canvas.example.edu/files/notes-v2": pdf }).describeWebPageAtPdfAddress(fileTab, filePage),
+		{ embeddedPdfUrl: "https://canvas.example.edu/files/notes-v2" },
+		"a link marked as a download counts too",
+	);
+	assert.deepEqual(await withLinks([{ url: fileLink, download: false }], {}).describeWebPageAtPdfAddress(fileTab, filePage), { embeddedPdfUrl: "" }, "a download that is not a PDF is left alone");
+	assert.deepEqual(
+		await withLinks([{ url: fileLink, download: false }, { url: "https://canvas.example.edu/courses/7/files/43/download?download_frd=1", download: false }]).describeWebPageAtPdfAddress(fileTab, filePage),
+		{ embeddedPdfUrl: "" },
+		"two files to download is a list, not a page about one file",
+	);
+	assert.deepEqual(
+		await make({ page: { ...webPage([{ url: "https://canvas.example.edu/preview/42.pdf", typed: false, area: 500000 }]), links: [{ url: fileLink, download: false }] }, responses: { [fileLink]: pdf } }).describeWebPageAtPdfAddress(fileTab, filePage),
+		{ embeddedPdfUrl: "https://canvas.example.edu/preview/42.pdf" },
+		"a PDF the page shows in a frame comes first",
+	);
+	const backgroundSourceForLinks = await readFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8");
+	assert.match(backgroundSourceForLinks, /parsed\.origin === location\.origin\) links\.push\(\{ url: parsed\.href, download \}\)/, "only the page's own site is looked at for the file");
+
 	// Anything short of a confirmed web page is treated as the PDF it claims to be.
 	assert.equal(await make({ page: webPage(), response: pdf }).describeWebPageAtPdfAddress(tab, wrapper), null, "another reader drew its page over a real PDF");
 	assert.equal(await make({ page: webPage(), response: new Error("Failed to fetch") }).describeWebPageAtPdfAddress(tab, wrapper), null, "the address could not be asked");
@@ -257,72 +288,341 @@ async function assertWebPageAtPdfAddressIsRecognised() {
 // Chrome refuses a debugger on a tab that holds another extension's frame (a
 // PDF reader, a password manager), and the viewer showed that refusal instead
 // of the PDF. The tab's own document makes the request then.
+//
+// A download link from a course site (a signed Gradescope link, a Canvas file
+// link) stops working after a while, though the tab still shows the PDF, and
+// the viewer showed "could not load the PDF (HTTP 403)" over it. The browser
+// kept the file, so its copy is used: first the one the tab's own document
+// can reach, without asking the file host, and after a refusal the one only a
+// repeated page load reaches.
 async function assertProtectedPdfLoadsWhenDebuggerIsRefused() {
 	const names = ["isHttpLikeUrl", "isFileUrl", "isLikelyPdfResourceUrl", "normalizePdfUrlCandidate", "isRestrictedScriptingError", "isOwnExtensionPdfViewerUrl",
 		"isOnhandPdfViewerLikeUrl", "extractPdfSourceUrlFromViewerLikeUrl", "stripUrlHash", "pdfUrlForAuthorizedViewerTab",
-		"looksLikePdfBytes", "encodeBytesAsBase64", "loadAuthorizedPdfBytesFromTab", "loadPdfBytesFromTabDocument"];
+		"looksLikePdfBytes", "encodeBytesAsBase64", "decodeBase64Bytes", "loadAuthorizedPdfBytesFromTab", "loadPdfBytesFromTabDocument",
+		"requestPdfFromTabDocument", "loadSavedPdfCopyFromTabDocument", "isRefusedPdfLoadError", "refusedPdfLinkMessage"];
 	const declarations = await Promise.all(names.map((name) => loadBackgroundFunction(name)));
+	const backgroundSource = await readSourceFile("packages/browser-extension/background.js");
+	const messageStart = /const REFUSED_PDF_LINK_MESSAGE_START = "([^"]+)";/.exec(backgroundSource)?.[1];
+	assert.ok(messageStart, "the expired-link message has a fixed start the viewer handoff can recognise");
 	const pdfUrl = "https://library.example.test/reserve/chapter-3.pdf";
 	const refused = new Error("Cannot access a chrome-extension:// URL of different extension");
+	const hostRefused = new Error("The authenticated browser tab could not load the PDF (HTTP 403).");
 	const pdfBytes = new TextEncoder().encode(`%PDF-1.7\n${"x".repeat(70000)}\n%%EOF`);
-	const make = ({ debuggerResult, tabUrl = pdfUrl, response = () => new Response(pdfBytes, { headers: { "content-type": "application/pdf" } }) }) => {
+	const savedBytes = new TextEncoder().encode(`%PDF-1.7\n${"s".repeat(5000)}\n%%EOF`);
+	const asPdf = (bytes) => () => new Response(bytes, { headers: { "content-type": "application/pdf" } });
+	// savedCopy: what the browser kept where the tab's document can reach it.
+	// spareCopy: what a repeated page load in a spare tab gets back.
+	const make = ({ debuggerResult, tabUrl = pdfUrl, response = asPdf(pdfBytes), savedCopy = null, spareCopy = null, documentType = "application/pdf", scriptable = true }) => {
 		const requests = [];
 		const scripted = [];
+		const calls = { debugger: 0, spare: 0 };
 		const originalFetch = globalThis.fetch;
 		const load = new Function(
-			"chrome", "authorizeOnhandPdfViewerCredentialedSource", "loadPdfBytesThroughTabDebugger", "executeScriptInTab", "withOperationTimeout",
-			"ONHAND_AUTHENTICATED_PDF_MAX_BYTES", "ONHAND_AUTHENTICATED_PDF_LOAD_TIMEOUT_MS",
+			"chrome", "authorizeOnhandPdfViewerCredentialedSource", "loadPdfBytesThroughTabDebugger", "loadSavedPdfCopyThroughSpareTab", "executeScriptInTab", "withOperationTimeout",
+			"ONHAND_AUTHENTICATED_PDF_MAX_BYTES", "ONHAND_AUTHENTICATED_PDF_LOAD_TIMEOUT_MS", "REFUSED_PDF_LINK_MESSAGE_START",
 			`${declarations.join("\n")}\nreturn loadAuthorizedPdfBytesFromTab;`,
 		)(
 			{ tabs: { get: async (id) => ({ id, url: tabUrl }) }, runtime: { getURL: (path) => `chrome-extension://onhand-test/${path}` } },
 			async () => true,
 			async () => {
+				calls.debugger += 1;
 				if (debuggerResult instanceof Error) throw debuggerResult;
 				return debuggerResult;
 			},
-			// Run the function meant for the tab here, with the tab's fetch stood in.
+			async () => {
+				calls.spare += 1;
+				return spareCopy;
+			},
+			// Run the function meant for the tab here, with the tab's document and fetch stood in.
 			async (tabId, func, args) => {
+				if (!scriptable) throw new Error("Cannot access contents of the page. Extension manifest must request permission to access the respective host.");
 				scripted.push(tabId);
+				globalThis.document = { contentType: documentType };
 				globalThis.fetch = async (url, init) => {
 					requests.push({ url, init });
+					if (init?.cache === "only-if-cached") {
+						if (!savedCopy) throw new TypeError("Failed to fetch");
+						return asPdf(savedCopy)();
+					}
 					return response();
 				};
 				try {
 					return await func(...args);
 				} finally {
 					globalThis.fetch = originalFetch;
+					delete globalThis.document;
 				}
 			},
 			(promise) => promise,
 			24 * 1024 * 1024,
 			10000,
+			messageStart,
 		);
-		return { load: () => load({ tab: { id: 12 } }, pdfUrl), requests, scripted };
+		return { load: () => load({ tab: { id: 12 } }, pdfUrl), requests, scripted, calls };
 	};
+	const decoded = (result) => Buffer.from(result.dataBase64, "base64");
+
+	// The browser's own copy first: nothing is asked of the file host, and no debugger is attached.
+	const viaSaved = make({ debuggerResult: hostRefused, savedCopy: savedBytes });
+	assert.equal(decoded(await viaSaved.load()).length, savedBytes.byteLength);
+	assert.equal(viaSaved.requests.length, 1);
+	assert.equal(viaSaved.requests[0].init.cache, "only-if-cached", "the saved copy or nothing");
+	assert.equal(viaSaved.requests[0].init.mode, "same-origin");
+	assert.deepEqual(viaSaved.calls, { debugger: 0, spare: 0 });
 
 	const viaDebugger = make({ debuggerResult: pdfBytes });
 	assert.equal((await viaDebugger.load()).byteLength, pdfBytes.byteLength);
-	assert.deepEqual(viaDebugger.scripted, [], "the debugger path is still the first choice");
+	assert.deepEqual(viaDebugger.requests.map((request) => request.init.cache), ["only-if-cached"], "without a saved copy the debugger asks the file host");
+	assert.deepEqual(viaDebugger.calls, { debugger: 1, spare: 0 });
 
 	const viaTab = make({ debuggerResult: refused });
 	const loaded = await viaTab.load();
 	assert.equal(loaded.byteLength, pdfBytes.byteLength);
-	assert.equal(Buffer.from(loaded.dataBase64, "base64").toString("latin1").slice(0, 8), "%PDF-1.7", "the bytes arrive intact");
-	assert.equal(Buffer.from(loaded.dataBase64, "base64").length, pdfBytes.byteLength);
-	assert.deepEqual(viaTab.scripted, [12], "the tab that asked is the tab that fetches");
-	assert.equal(viaTab.requests[0].url, pdfUrl);
-	assert.equal(viaTab.requests[0].init.credentials, "include", "signed in as the reader is");
-	assert.equal(viaTab.requests[0].init.cache, "force-cache", "a link that downloads once is not asked for twice");
+	assert.equal(decoded(loaded).toString("latin1").slice(0, 8), "%PDF-1.7", "the bytes arrive intact");
+	assert.equal(decoded(loaded).length, pdfBytes.byteLength);
+	assert.deepEqual(viaTab.scripted, [12, 12], "the tab that asked is the tab that fetches");
+	assert.equal(viaTab.requests[1].url, pdfUrl);
+	assert.equal(viaTab.requests[1].init.credentials, "include", "signed in as the reader is");
+	assert.equal(viaTab.requests[1].init.cache, "force-cache", "a link that downloads once is not asked for twice");
 
-	// What the tab's document gets back is checked like the debugger's answer.
-	await assert.rejects(make({ debuggerResult: refused, response: () => new Response("<!doctype html><title>Sign in</title>", { status: 200 }) }).load(), /returned a non-PDF response/);
-	await assert.rejects(make({ debuggerResult: refused, response: () => new Response("", { status: 403 }) }).load(), /could not load the PDF \(HTTP 403\)/);
-	await assert.rejects(make({ debuggerResult: refused, response: () => { throw new TypeError("Failed to fetch"); } }).load(), /could not load the PDF \(Failed to fetch\)/);
-	// Other debugger failures are not papered over, and a tab that is not a web page is not scripted.
-	await assert.rejects(make({ debuggerResult: new Error("The authenticated browser tab could not load the PDF (HTTP 404).") }).load(), /HTTP 404/);
-	const standalone = make({ debuggerResult: refused, tabUrl: `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent(pdfUrl)}` });
+	// The file host refuses (the link expired): the copy a repeated page load reaches is used.
+	const viaSpare = make({ debuggerResult: hostRefused, spareCopy: savedBytes });
+	assert.equal(decoded(await viaSpare.load()).length, savedBytes.byteLength);
+	assert.deepEqual(viaSpare.calls, { debugger: 1, spare: 1 });
+	const viaSpareAfterTab = make({ debuggerResult: refused, response: () => new Response("", { status: 403 }), spareCopy: savedBytes });
+	assert.equal(decoded(await viaSpareAfterTab.load()).length, savedBytes.byteLength, "also when the tab's document was the one refused");
+	const unscriptable = make({ debuggerResult: hostRefused, spareCopy: savedBytes, scriptable: false });
+	assert.equal(decoded(await unscriptable.load()).length, savedBytes.byteLength, "a tab that can't be scripted may still be showing the PDF");
+
+	// No copy anywhere: said in plain words, with what to do, and without the address.
+	const noCopy = make({ debuggerResult: hostRefused });
+	await assert.rejects(noCopy.load(), (error) => {
+		assert.ok(error.message.startsWith(messageStart));
+		assert.match(error.message, /the file host answered HTTP 403\) and the browser kept no copy Onhand could use\. Download links often expire: open the PDF again from the page that links to it, then ask again\.$/);
+		assert.ok(!error.message.includes("library.example.test"));
+		return true;
+	});
+	assert.deepEqual(noCopy.calls, { debugger: 1, spare: 1 });
+	await assert.rejects(
+		make({ debuggerResult: refused, response: () => new Response("<!doctype html><title>Sign in</title>", { status: 200 }) }).load(),
+		/link has stopped working \(the file host sent something other than the PDF\)/,
+		"what the tab's document gets back is checked like the debugger's answer",
+	);
+	// A tab showing the file host's refusal instead of a PDF has no copy to look for.
+	const errorPage = make({ debuggerResult: hostRefused, documentType: "application/xml", spareCopy: savedBytes });
+	await assert.rejects(errorPage.load(), /: This link did not return a PDF \(the file host answered HTTP 403\)\. Download links often expire: reload the page that links to it and open the PDF from there\.$/);
+	assert.deepEqual(errorPage.calls, { debugger: 1, spare: 0 });
+
+	// Failures that are not a refusal stay as they were, and no spare tab is opened for them.
+	const offline = make({ debuggerResult: refused, response: () => { throw new TypeError("Failed to fetch"); }, spareCopy: savedBytes });
+	await assert.rejects(offline.load(), /could not load the PDF \(Failed to fetch\)/);
+	const slow = make({ debuggerResult: new Error("Timed out loading the PDF through its authenticated browser tab."), spareCopy: savedBytes });
+	await assert.rejects(slow.load(), /Timed out loading the PDF/);
+	assert.equal(offline.calls.spare + slow.calls.spare, 0);
+	// A viewer tab of Onhand's own is not a web page: it is not scripted and has no copy to find.
+	const viewerUrl = `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent(pdfUrl)}`;
+	const standalone = make({ debuggerResult: refused, tabUrl: viewerUrl });
 	await assert.rejects(standalone.load(), /Cannot access a chrome-extension/);
-	assert.deepEqual(standalone.scripted, []);
+	const standaloneRefused = make({ debuggerResult: new Error("The authenticated browser tab could not load the PDF (HTTP 404)."), tabUrl: viewerUrl, spareCopy: savedBytes });
+	await assert.rejects(standaloneRefused.load(), /could not load the PDF \(HTTP 404\)/);
+	assert.deepEqual([...standalone.scripted, ...standaloneRefused.scripted], []);
+	assert.equal(standaloneRefused.calls.spare, 0);
+}
+
+// A Canvas "Download" link hands the browser a file to save. Opening one from a
+// course page put the file in Downloads, left the tab where it was and laid
+// Onhand's viewer over the course page ("The authenticated PDF retry no
+// longer matches the source tab"); navigating to one in a new tab ended in
+// "No tab with id". Such an address is opened in Onhand's viewer, in its own
+// tab, without being tried in a tab first when it says it downloads.
+async function assertDownloadLinksOpenInOnhandViewer() {
+	const names = ["isDownloadLinkUrl", "watchMainFrameCommits", "tabWasHandedAFile", "isMissingTabError", "stripUrlHash", "isHttpLikeUrl", "navigateBrowser", "openSavedAddressAfterNavigation"];
+	const declarations = await Promise.all(names.map((name) => loadBackgroundFunction(name)));
+	const source = await readSourceFile("packages/browser-extension/background.js");
+	const message = source.match(/const SAVED_ADDRESS_MESSAGE =\s*("[^"]+");/)?.[1];
+	assert.ok(message, "SAVED_ADDRESS_MESSAGE not found");
+
+	// What the browser does with an address: "page" shows it, "file" saves it,
+	// "bounce" commits a redirect back to the page the tab was on.
+	const createHarness = ({ outcome = "page", pdf = true, closesNewTab = true } = {}) => {
+		const tabs = new Map([[1, { id: 1, index: 0, windowId: 7, active: true, status: "complete", url: "https://canvas.example.edu/courses/1/files/2" }]]);
+		const commitListeners = new Set();
+		const calls = { created: [], updated: [], removed: [], opened: [], probed: [] };
+		let nextTabId = 2;
+		const land = (tab, url) => {
+			if (outcome === "file") {
+				if (tab.fresh && closesNewTab) tabs.delete(tab.id);
+				return;
+			}
+			if (outcome === "page") tab.url = url;
+			for (const listener of commitListeners) listener({ tabId: tab.id, frameId: 0 });
+		};
+		const chrome = {
+			tabs: {
+				get: async (tabId) => {
+					if (!tabs.has(tabId)) throw new Error(`No tab with id: ${tabId}.`);
+					return { ...tabs.get(tabId) };
+				},
+				query: async () => [...tabs.values()].filter((tab) => tab.active).map((tab) => ({ ...tab })),
+				create: async ({ url, active, windowId }) => {
+					const tab = { id: nextTabId++, index: tabs.size, windowId, active: active !== false, status: "complete", url: "", fresh: true };
+					tabs.set(tab.id, tab);
+					calls.created.push(url);
+					const created = { ...tab };
+					land(tab, url);
+					return created;
+				},
+				update: async (tabId, { url }) => {
+					const tab = tabs.get(tabId);
+					calls.updated.push(url);
+					land(tab, url);
+					return { ...tab };
+				},
+				remove: async (tabId) => {
+					calls.removed.push(tabId);
+					tabs.delete(tabId);
+				},
+			},
+			webNavigation: { onCommitted: { addListener: (listener) => commitListeners.add(listener), removeListener: (listener) => commitListeners.delete(listener) } },
+		};
+		const deps = {
+			chrome,
+			SAVED_ADDRESS_MESSAGE: JSON.parse(message),
+			assertSafeBrowserNavigationUrl: () => {},
+			clampNumber: (value, fallback) => (Number.isFinite(value) ? value : fallback),
+			findExistingNavigationTab: async () => null,
+			focusTab: async (tabId) => chrome.tabs.get(tabId),
+			waitForTabComplete: async (tabId) => chrome.tabs.get(tabId),
+			tabNavigationWait: () => ({}),
+			resolveTargetTab: async (args = {}) => chrome.tabs.get(typeof args.tabId === "number" ? args.tabId : 1),
+			isLikelyPdfResourceUrl: (url) => /\.pdf(?:$|[?#])/i.test(String(url)),
+			probeAddressIsPdf: async (url) => {
+				calls.probed.push(url);
+				return pdf;
+			},
+			openPdfInOnhandViewer: async (args) => {
+				calls.opened.push(args);
+				return { tab: { id: 99, url: "chrome-extension://onhand/pdf-viewer.html" }, opened: true, alreadyOpen: false };
+			},
+		};
+		const helpers = new Function(...Object.keys(deps), `${declarations.join("\n")}\nreturn { ${names.join(", ")} };`)(...Object.values(deps));
+		return { ...helpers, calls, tabs, listeners: commitListeners };
+	};
+
+	const { isDownloadLinkUrl, tabWasHandedAFile } = createHarness();
+	for (const url of [
+		"https://canvas.example.edu/courses/20417/files/5550123/download?download_frd=1",
+		"https://canvas.example.edu/files/5550123/download",
+		"https://moodle.example.edu/pluginfile.php/12/mod_resource/content/1/notes.pdf?forcedownload=1",
+		"https://files.example.com/s/abc/notes.pdf?dl=1",
+		"https://drive.example.com/uc?export=download&id=abc",
+		"https://bucket.s3.amazonaws.com/notes.pdf?X-Amz-Signature=abc&response-content-disposition=attachment%3B%20filename%3Dnotes.pdf",
+	]) {
+		assert.equal(isDownloadLinkUrl(url), true, `${url} says it downloads`);
+	}
+	for (const url of [
+		"https://arxiv.org/pdf/1706.03762",
+		"https://example.edu/paper.pdf",
+		"https://example.edu/downloads/paper.pdf",
+		"https://files.example.com/s/abc/notes.pdf?dl=0",
+		"https://bucket.s3.amazonaws.com/hw3_2.pdf?X-Amz-Signature=abc",
+		"file:///Users/me/download",
+		"",
+	]) {
+		assert.equal(isDownloadLinkUrl(url), false, `${url || "(empty)"} is tried in a tab`);
+	}
+
+	const page = "https://canvas.example.edu/courses/1/files/2";
+	const link = `${page}/download?download_frd=1`;
+	const done = (url) => ({ id: 1, status: "complete", url });
+	assert.equal(tabWasHandedAFile(page, link, done(page), false), true, "finished, nothing committed, still on the page");
+	assert.equal(tabWasHandedAFile(page, link, done(page), true), false, "a redirect back to the page committed");
+	assert.equal(tabWasHandedAFile(page, link, done(link), false), false, "the tab shows the address");
+	assert.equal(tabWasHandedAFile(page, link, { ...done(page), status: "loading" }, false), false, "still loading");
+	assert.equal(tabWasHandedAFile(page, link, { ...done(page), pendingUrl: link }, false), false, "still on its way");
+	assert.equal(tabWasHandedAFile(page, `${page}#notes`, done(page), false), false, "a move within the page loads nothing");
+	assert.equal(tabWasHandedAFile("about:blank", link, done(""), false), true, "a tab opened for the address that never left its blank start");
+	assert.equal(tabWasHandedAFile(page, link, null, false), false);
+	assert.equal(tabWasHandedAFile(page, "mailto:staff@example.edu", done(page), false), false, "a mail link leaves the tab where it was and saves nothing");
+
+	// browser_navigate in a new tab: the tab closes itself.
+	const closing = createHarness({ outcome: "file" });
+	const closed = await closing.navigateBrowser({ url: link, newTab: true });
+	assert.equal(closed.savedAddress, true, "a tab that closed itself was handed a file");
+	assert.equal(closed.tab, null);
+	assert.equal(closing.listeners.size, 0, "the commit listener is removed");
+	// ...or, in a browser that leaves it open and blank, is closed.
+	const lingering = createHarness({ outcome: "file", closesNewTab: false });
+	const lingered = await lingering.navigateBrowser({ url: link, newTab: true });
+	assert.equal(lingered.savedAddress, true);
+	assert.deepEqual(lingering.calls.removed, [2], "the blank tab Onhand opened is closed");
+	// In the same tab: the tab stays on the page it was on.
+	const staying = createHarness({ outcome: "file" });
+	const stayed = await staying.navigateBrowser({ url: link, tabId: 1 });
+	assert.equal(stayed.savedAddress, true, "the old page is not reported as the destination");
+	assert.equal(stayed.tab.url, page);
+	assert.deepEqual(staying.calls.removed, [], "the reader's tab is left alone");
+	// Ordinary navigations are what they were.
+	for (const args of [{ url: "https://example.edu/next", newTab: true }, { url: "https://example.edu/next", tabId: 1 }]) {
+		const ordinary = createHarness({ outcome: "page" });
+		const result = await ordinary.navigateBrowser(args);
+		assert.equal(result.savedAddress, undefined);
+		assert.equal(result.tab.url, "https://example.edu/next");
+		assert.equal(ordinary.listeners.size, 0);
+	}
+	const bounced = await createHarness({ outcome: "bounce" }).navigateBrowser({ url: "https://canvas.example.edu/login", tabId: 1 });
+	assert.equal(bounced.savedAddress, undefined, "a redirect back to the same page is a navigation");
+	const reloaded = await createHarness({ outcome: "file" }).navigateBrowser({ url: page, tabId: 1 });
+	assert.equal(reloaded.savedAddress, undefined, "the address the tab already shows");
+
+	// What navigate returns for a saved address: a PDF goes to Onhand's viewer.
+	const pdfLink = createHarness({ outcome: "file", pdf: true });
+	const openedPdf = await pdfLink.openSavedAddressAfterNavigation({ url: link, newTab: true, active: false }, await pdfLink.navigateBrowser({ url: link, newTab: true, active: false }));
+	assert.equal(openedPdf.tab.id, 99, "the model is given the viewer tab");
+	assert.deepEqual(openedPdf.navigation, { createdNewTab: true, reusedExistingTab: false, savedAddress: true, onhandPdfViewer: { opened: true } });
+	assert.equal(pdfLink.calls.opened.length, 1);
+	assert.equal(pdfLink.calls.opened[0].pdfUrl, link);
+	assert.equal(pdfLink.calls.opened[0].savedAddress, true, "the viewer open does not try the address in a tab again");
+	assert.equal(pdfLink.calls.opened[0].tabId, 1, "the viewer opens beside the page that was active");
+	assert.equal(pdfLink.calls.opened[0].active, false);
+	// An address that names a PDF needs no request to tell.
+	const named = createHarness({ outcome: "file", pdf: false });
+	await named.openSavedAddressAfterNavigation({ url: "https://example.edu/get/notes.pdf", tabId: 1 }, { tab: { id: 1 }, savedAddress: true });
+	assert.deepEqual(named.calls.probed, []);
+	assert.equal(named.calls.opened.length, 1);
+	// Anything else has nothing to read, and the model is told so.
+	const archive = createHarness({ outcome: "file", pdf: false });
+	await assert.rejects(
+		archive.openSavedAddressAfterNavigation({ url: "https://example.edu/get?id=7", tabId: 1 }, { tab: { id: 1 }, savedAddress: true }),
+		/did not open a page: the browser saves it as a file/,
+	);
+	assert.deepEqual(archive.calls.opened, []);
+
+	// The viewer open itself: a link that says it downloads is never sent to a
+	// tab, and a tab that was handed a file does not get the viewer laid over it.
+	const open = await loadBackgroundFunction("openPdfInOnhandViewer");
+	assert.match(open, /const savedAddressOpen = isHttpLikeUrl\(pdfUrl\) && !pdfTabMatchesSource\(sourceTab, pdfUrl\) && \(args\.savedAddress === true \|\| isDownloadLinkUrl\(pdfUrl\)\);/);
+	const savedBranch = open.indexOf("if (savedAddressOpen) return await openSavedAddressInViewerTab();");
+	const firstTabSend = open.indexOf("url: pdfUrl,");
+	assert.ok(savedBranch !== -1 && firstTabSend !== -1 && savedBranch < firstTabSend, "the saved-address branch comes before any tab is sent to the address");
+	assert.match(open, /tabWasHandedAFile\(openedOwnTab \? "about:blank" : sourceTab\.url, pdfUrl, finalTab, commits\.committed\(finalTab\.id\)\)\) \{\s*if \(openedOwnTab\) await chrome\.tabs\.remove\(finalTab\.id\)\.catch\(\(\) => \{\}\);\s*return await openSavedAddressInViewerTab\(\);/);
+	const handedAFile = open.indexOf("tabWasHandedAFile(openedOwnTab");
+	const inlineInstall = open.indexOf("installInlineOnhandPdfViewer(finalTab.id, pdfUrl, viewerOptions)");
+	assert.ok(handedAFile !== -1 && inlineInstall !== -1 && handedAFile < inlineInstall, "the check runs before the viewer is laid over the tab");
+	// The viewer tab is granted the reader's sign-in before it loads.
+	assert.match(open, /grantOnhandPdfViewerCredentialedSource\(viewerTab\.id, pdfUrl\);\s*viewerTab = await chrome\.tabs\.update\(viewerTab\.id, \{ url: viewerUrl \}\);/);
+	assert.match(source, /if \(navigation\.savedAddress\) return await openSavedAddressAfterNavigation\(args, navigation\);/);
+	// A link that says it downloads a PDF is not sent to a tab at all.
+	const navigateCase = source.slice(source.indexOf('case "navigate": {'), source.indexOf('case "open_pdf_in_onhand_viewer": {'));
+	assert.match(navigateCase, /if \(isDownloadLinkUrl\(args\.url\) && \(await probeAddressIsPdf\(args\.url\)\) === true\) \{\s*return await openSavedAddressAfterNavigation\(args, null, true\);\s*\}\s*const navigation = await navigateBrowser\(args\);/);
+	const direct = createHarness({ outcome: "file", pdf: false });
+	const straight = await direct.openSavedAddressAfterNavigation({ url: link, newTab: true, windowId: 7 }, null, true);
+	assert.equal(straight.tab.id, 99);
+	assert.deepEqual([direct.calls.probed, direct.calls.created, direct.calls.updated], [[], [], []], "known to be a PDF: no second request and no tab sent to the link");
+	assert.equal(direct.calls.opened[0].tabId, 1, "beside the active tab of that window");
+	const sameTab = createHarness({ outcome: "file" });
+	await sameTab.openSavedAddressAfterNavigation({ url: link, tabId: 1 }, null, true);
+	assert.equal(sameTab.calls.opened[0].tabId, 1, "beside the tab that was to be navigated");
 }
 
 async function assertPdfViewerHandoffHelpers() {
@@ -562,7 +862,7 @@ async function assertPdfViewerHandoffHelpers() {
 	assert.match(backgroundSource, /function findExistingNavigationTab\(url,\s*windowId\)/, "new-tab navigation should look for an already-open matching URL first");
 	assert.ok(
 		backgroundSource.indexOf("const existingTab = await findExistingNavigationTab(args.url, windowId);") <
-			backgroundSource.indexOf("const createdTab = await chrome.tabs.create", backgroundSource.indexOf("async function navigateBrowser")),
+			backgroundSource.indexOf("createdTab = await chrome.tabs.create", backgroundSource.indexOf("async function navigateBrowser")),
 		"browser_navigate with newTab should reuse an existing distinct URL tab before creating another tab",
 	);
 	assert.match(backgroundSource, /href: element instanceof HTMLAnchorElement \? element\.href \|\| null : null/, "element search should expose resolved link hrefs for navigation");
@@ -740,8 +1040,8 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	// Two cards stacking on the same spot, or a highlight painting over a
 	// card, both make the note unreadable until dismissed. Cards must avoid
 	// other cards when positioning and sit above highlights in the layer.
-	assert.match(source, /function collectOtherPdfNoteRects/, "PDF viewer should gather other note rects so cards do not stack");
-	assert.match(source, /choosePdfNotePosition\([\s\S]*?otherNoteRects\)/, "PDF note positioning should avoid other placed notes");
+	assert.match(source, /if \(placed\.some\(\(rect\) => rectOverlapArea\(card, rect\) > 0\)\) return false;/, "an open PDF note card is never placed over another");
+	assert.match(source, /choosePdfNotePosition\(page, pageRect, anchor, width, Math\.min\(240, height\), \[\.\.\.placed, \.\.\.tabSlots\]/, "PDF note positioning should avoid other placed notes and the tabs");
 	assert.match(source, /noteOverlap\s*\*\s*\d+/, "PDF note scoring should penalize overlapping another note");
 	assert.ok(
 		source.indexOf('zIndex: "1"') !== -1 && source.indexOf('"z-index": "4"') !== -1,
@@ -834,6 +1134,65 @@ async function assertGithubCodeViewIsReadableAndMarkable() {
 	const mark = pageDom.window.document.querySelector(`[data-onhand-annotation-id="${result.annotationId}"]`);
 	assert.match(mark?.textContent || "", /return request\("get"/, "a code line can be marked");
 	assert.ok(mark?.closest(".react-code-line-contents"), "the mark lands in the rendered code line, not the hidden textarea");
+}
+
+async function assertPdfToolsOnAWebPageSayWhy() {
+	// A PDF tool aimed at a course site's file page (a web page that links to
+	// the PDF) answered "TypeError: toolkit.searchPdf is not a function".
+	const declarations = await Promise.all(["isFileUrl", "isHttpLikeUrl", "isLikelyPdfResourceUrl", "runPdfViewerToolkitMethod"].map((name) => loadBackgroundFunction(name)));
+	const source = await readSourceFile("packages/browser-extension/background.js");
+	const message = source.match(/const PDF_TOOL_ON_WEB_PAGE_MESSAGE =\s*("[^"]+");/)?.[1];
+	assert.ok(message, "PDF_TOOL_ON_WEB_PAGE_MESSAGE not found");
+	const build = (failure) => {
+		const calls = { ran: 0, mounted: [] };
+		const api = new Function("runPageToolkitMethod", "openPdfInOnhandViewer", "log", "PDF_TOOL_ON_WEB_PAGE_MESSAGE", `${declarations.join("\n")}\nreturn { runPdfViewerToolkitMethod };`)(
+			async () => {
+				calls.ran += 1;
+				if (calls.ran === 1) throw new Error(failure);
+				return { ok: true };
+			},
+			async (args) => { calls.mounted.push(args.tabId); },
+			() => {},
+			JSON.parse(message),
+		);
+		return { ...api, calls };
+	};
+	const missing = "TypeError: toolkit.searchPdf is not a function\n    at <anonymous>:5836:741";
+	const page = build(missing);
+	await assert.rejects(page.runPdfViewerToolkitMethod({ id: 4, url: "https://canvas.example.edu/courses/1/files/2?module_item_id=5" }, "searchPdf", {}), (error) => {
+		assert.match(error.message, /^That tab is a web page, not a PDF in Onhand's viewer/);
+		assert.match(error.message, /browser_open_pdf_in_onhand_viewer \(pdfUrl\)/);
+		assert.doesNotMatch(error.message, /TypeError|is not a function|canvas\.example/);
+		return true;
+	});
+	assert.deepEqual([page.calls.ran, page.calls.mounted], [1, []], "nothing is mounted over a web page");
+	// A PDF tab still showing the browser's own viewer gets Onhand's viewer, as before.
+	const pdfTab = build(missing);
+	assert.deepEqual(await pdfTab.runPdfViewerToolkitMethod({ id: 5, url: "https://papers.example.test/paper.pdf" }, "searchPdf", {}), { ok: true });
+	assert.deepEqual([pdfTab.calls.ran, pdfTab.calls.mounted], [2, [5]]);
+	// Any other failure on a web page is passed on as it is.
+	const other = build("Page toolkit scripting timed out: searchPdf");
+	await assert.rejects(other.runPdfViewerToolkitMethod({ id: 4, url: "https://canvas.example.edu/courses/1" }, "searchPdf", {}), /^Error: Page toolkit scripting timed out: searchPdf$/);
+}
+
+async function assertDownloadLinkViewerTakesTheFileName() {
+	// A course site's download link ends in "/download": the viewer tab was
+	// titled "download - Onhand PDF Viewer".
+	const { transform } = await import("esbuild");
+	const declaration = await loadFunctionFromFile("packages/browser-extension/src/pdf-viewer.ts", "documentNameForTitle");
+	const { code } = await transform(declaration, { loader: "ts", target: "es2022" });
+	const { documentNameForTitle } = new Function(`${code}\nreturn { documentNameForTitle };`)();
+	const hosted = { contentDispositionFilename: "Graph  Search Notes.pdf", info: { Title: "Microsoft Word - notes.docx" } };
+	assert.equal(documentNameForTitle("download", hosted), "Graph Search Notes.pdf", "the file host's name for the file comes first");
+	assert.equal(documentNameForTitle("download", { contentDispositionFilename: null, info: { Title: " Lecture 12 " } }), "Lecture 12", "then the PDF's own title");
+	assert.equal(documentNameForTitle("view.php", { info: {} }), "", "with neither, the address's name stays");
+	assert.equal(documentNameForTitle("download", null), "");
+	assert.equal(documentNameForTitle("download", { info: { Title: "download" } }), "");
+	assert.equal(documentNameForTitle("download", { info: { Title: "x".repeat(201) } }), "", "nothing absurdly long");
+	assert.equal(documentNameForTitle("hw3_2.pdf", hosted), "", "an address that names the file is left alone");
+	assert.equal(documentNameForTitle("Paper.PDF", hosted), "");
+	const source = await readSourceFile("packages/browser-extension/src/pdf-viewer.ts");
+	assert.match(source, /pdfDocument = await loadPdfDocumentFromUrl\(sourceUrl\);[\s\S]{0,260}const loaded = pdfDocument;\s*void Promise\.resolve\(\)\s*\.then\(\(\) => loaded\.getMetadata\(\)\)[\s\S]{0,260}if \(!name \|\| loaded !== pdfDocument\) return;\s*document\.title = `\$\{name\} - Onhand PDF Viewer`;\s*titleElement\.textContent = name;/, "the name is taken once the document has loaded, without holding up the first page");
 }
 
 async function assertPdfMatchedTextKeepsLineBreakSpaces() {
@@ -4921,10 +5280,194 @@ async function assertPdfSelectionIncludesAnchor() {
 	assert.equal(selectionInfo.pdfAnchor.rects[0].coordinateSpace, "page-normalized");
 }
 
+// A Canvas course page with its modules collapsed lists every file in the
+// page, not displayed. The page reads returned only the module names, so a
+// model sent there for the lecture notes found none (the owner's own turn,
+// 2026-11-21). Links inside closed parts of a page are reported beside the
+// text, under the name of the part they sit in.
+async function assertCollapsedSectionLinksAreReported() {
+	const collect = await loadBackgroundFunction("collectCollapsedSectionLinksInPage");
+	const dom = new JSDOM(
+		`<!doctype html><html><body>
+		<nav><ul style="display:none"><li><a href="/account/settings">Settings</a></li></ul></nav>
+		<main>
+			<div style="display:none"><a href="/courses/7/external_tools/9">Launch tool</a></div>
+			<h1>CS 3410 Foundations of Planning</h1>
+			<ul class="share" style="display:none"><li><a href="/share/7">Share this course</a></li></ul>
+			<p><a id="shown" href="/courses/7/syllabus">Syllabus</a></p>
+			<div class="context_module collapsed_module"><div class="ig-header"><h2><span class="ig-header-title">Motion Planning</span></h2></div>
+				<div class="content" style="display:none"><ul>
+					<li><a href="/courses/7/modules/items/11">Graph Search Notes.pdf</a></li>
+					<li><a href="/courses/7/modules/items/12"> Graph   Search Slides.pdf </a><a href="/courses/7/modules/items/12">again</a></li>
+					<li><a href="#top">Back to top</a><a href="javascript:void(0)">Menu</a><a href="/courses/7/modules/items/13"></a></li>
+				</ul></div></div>
+			<div class="context_module collapsed_module"><div class="ig-header"><h2><span class="ig-header-title">Control</span></h2></div>
+				<div class="content" style="display:none"><ul><li><a href="/courses/7/modules/items/21">PID Notes.pdf</a></li></ul></div></div>
+			<div class="context_module" style="display:none"><a href="/courses/7/modules/items/{{ id }}">{{ title }}</a></div>
+			<ul class="al-options" style="display:none"><li><a href="/api/v1/courses/7/modules/items/11/duplicate">Duplicate</a></li></ul>
+			<h3>Week 9</h3>
+			<ul hidden><li><a href="/files/week9.pdf">Week 9 handout</a></li></ul>
+			<details><summary>Past exams</summary><p><a href="/files/midterm-2025.pdf">Midterm 2025</a></p></details>
+			<details open><summary>Open already</summary><p><a id="open-details" href="/files/shown.pdf">Shown file</a></p></details>
+			<div id="panel-2" hidden><a href="/courses/7/pages/office-hours">Office hours</a></div>
+			<button aria-controls="panel-2" aria-expanded="false">Staff</button>
+		</main></body></html>`,
+		{ url: "https://canvas.example.edu/courses/7", pretendToBeVisual: true },
+	);
+	const { window } = dom;
+	// JSDOM computes no layout: an element is drawn unless it or an ancestor
+	// is not displayed, hidden, or inside a <details> that is not open.
+	const drawn = (element) => {
+		const details = element.closest("details:not([open])");
+		if (details && !element.closest("summary")) return false;
+		for (let node = element; node && node !== window.document.documentElement; node = node.parentElement) {
+			if (node.hasAttribute("hidden") || window.getComputedStyle(node).display === "none") return false;
+		}
+		return true;
+	};
+	window.Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+		const size = drawn(this) ? 20 : 0;
+		return { left: 0, top: 0, right: size, bottom: size, width: size, height: size };
+	};
+	const run = new Function("window", "document", "location", "Node", "HTMLDetailsElement", `${collect}\nreturn collectCollapsedSectionLinksInPage;`)(
+		window,
+		window.document,
+		window.location,
+		window.Node,
+		window.HTMLDetailsElement,
+	);
+	const found = run({ limit: 120 });
+	const site = "https://canvas.example.edu";
+	assert.deepEqual(found.sections, [
+		{
+			title: "Motion Planning",
+			links: [
+				{ text: "Graph Search Notes.pdf", url: `${site}/courses/7/modules/items/11` },
+				{ text: "Graph Search Slides.pdf", url: `${site}/courses/7/modules/items/12` },
+			],
+		},
+		{ title: "Control", links: [{ text: "PID Notes.pdf", url: `${site}/courses/7/modules/items/21` }] },
+		{ title: "Week 9", links: [{ text: "Week 9 handout", url: `${site}/files/week9.pdf` }] },
+		{ title: "Past exams", links: [{ text: "Midterm 2025", url: `${site}/files/midterm-2025.pdf` }] },
+		{ title: "Staff", links: [{ text: "Office hours", url: `${site}/courses/7/pages/office-hours` }] },
+	], "each closed part's links, once each, under the part's name; no shown links, menus, row templates, in-page jumps or parts with no heading of their own");
+	assert.deepEqual([found.total, found.omitted], [6, 0]);
+	assert.deepEqual(run({ limit: 2 }).sections.map((section) => section.links.length), [2], "the list is capped");
+	assert.deepEqual([run({ limit: 2 }).total, run({ limit: 2 }).omitted], [6, 4], "and says how many it left out");
+
+	const background = await readFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8");
+	assert.equal((background.match(/await collapsedSectionLinksForTab\(tab\)/g) || []).length, 2, "both page reads carry the list");
+	assert.match(background, /const collapsedLinks = args\.startBlock \? null : await collapsedSectionLinksForTab\(tab\);/, "a later page of a long read does not repeat it");
+}
+
+// The browser freezes a tab left in the background, and a frozen tab answers
+// no script: on the owner's Canvas tab (2026-11-21) a read took 5 s or failed
+// after 15 s. A frozen tab is woken through the debugger before its command runs.
+async function assertFrozenTabIsWokenBeforeItsCommand() {
+	const declaration = await loadBackgroundFunction("wakeFrozenTab");
+	const build = ({ tab, debuggerApi = {}, wake = async () => ({}) }) => {
+		const sent = [];
+		let now = 1_000_000;
+		const run = new Function(
+			"chrome",
+			"debuggerApi",
+			"withDebugger",
+			"withOperationTimeout",
+			"Date",
+			`const FROZEN_TAB_WAKE_TIMEOUT_MS = 1500; const FROZEN_TAB_WAKE_RETRY_MS = 60000; const frozenTabWakeFailures = new Map();\n${declaration}\nreturn wakeFrozenTab;`,
+		)(
+			{ debugger: debuggerApi, tabs: { get: async (id) => (tab === null ? Promise.reject(new Error("No tab with id")) : { id, ...tab }) } },
+			debuggerApi,
+			async (tabId, fn) => fn({ send: async (method, params) => { sent.push([tabId, method, params]); return wake(); } }),
+			async (promise) => promise,
+			{ now: () => now },
+		);
+		return { run, sent, advance: (ms) => { now += ms; } };
+	};
+	const frozen = build({ tab: { frozen: true } });
+	assert.equal(await frozen.run(7), true);
+	assert.deepEqual(frozen.sent, [[7, "Page.setWebLifecycleState", { state: "active" }]], "a frozen tab is set running again");
+	const awake = build({ tab: { frozen: false } });
+	assert.equal(await awake.run(7), false);
+	assert.deepEqual(awake.sent, [], "a running tab is left alone: no debugger");
+	assert.equal(await build({ tab: {} }).run(7), false, "a browser that does not say (Firefox, older Chromium) is left alone");
+	assert.equal(await build({ tab: { frozen: true }, debuggerApi: null }).run(7), false, "no debugger, no wake");
+	assert.equal(await build({ tab: null }).run(7), false, "a tab that has gone");
+	assert.equal(await build({ tab: { frozen: true } }).run(undefined), false);
+	const refused = build({ tab: { frozen: true }, wake: async () => { throw new Error("Cannot attach to this target."); } });
+	assert.equal(await refused.run(7), false, "a tab the debugger may not attach to: the command goes ahead as before");
+	assert.equal(await refused.run(7), false);
+	assert.equal(refused.sent.length, 1, "and it is not tried again within the minute");
+	refused.advance(61_000);
+	await refused.run(7);
+	assert.equal(refused.sent.length, 2);
+
+	const background = await readFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8");
+	assert.match(background, /return wakeFrozenTab\(tabId\)\.then\(\(\) => fn\(\)\);/, "every command on a tab wakes it first");
+}
+
+// A Gradescope graded copy is built afresh for every request (10.7 s before
+// the first byte, measured on the real site 2026-11-21) and the browser may
+// keep no copy (no-store). The tab load stopped at 10 s and the viewer failed
+// over a PDF the tab was showing. The load now has 45 s, and whoever waits
+// for the viewer keeps waiting while it says the file is still coming.
+async function assertViewerWaitsForASlowSite() {
+	const background = await readFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8");
+	const limit = Number(/const ONHAND_AUTHENTICATED_PDF_LOAD_TIMEOUT_MS = (\d+);/.exec(background)?.[1]);
+	assert.ok(limit >= 30000, "a tab may take its time to hand over a PDF its site builds on request");
+	assert.match(background, /return await readDebuggerStream\(send, resource\.stream\);[\s\S]{0,120}\}, ONHAND_AUTHENTICATED_PDF_LOAD_TIMEOUT_MS \+ 30000\);/, "and the debugger task that carries it is given as long");
+	assert.match(background, /\}, ONHAND_PDF_VIEWER_SLOW_SITE_READY_TIMEOUT_MS \+ TAB_COMMAND_TIMEOUT_MS\);/, "the open command outlasts the wait");
+	assert.equal((background.match(/if \(status\?\.fetchingFromSite\) deadline = Math\.max\(deadline, startedAt \+ ONHAND_PDF_VIEWER_SLOW_SITE_READY_TIMEOUT_MS\);/g) || []).length, 5, "every status route extends the wait");
+
+	const declaration = await loadBackgroundFunction("waitForOnhandPdfViewerReady");
+	const build = (statuses) => {
+		let now = 0;
+		let polls = 0;
+		const wait = new Function(
+			"readOnhandPdfViewerTabStatus",
+			"delay",
+			"Date",
+			"ONHAND_PDF_VIEWER_SLOW_SITE_READY_TIMEOUT_MS",
+			`${declaration}\nreturn waitForOnhandPdfViewerReady;`,
+		)(
+			async () => { const status = statuses(now, polls); polls += 1; if (status instanceof Error) throw status; return status; },
+			async () => { now += 1000; },
+			{ now: () => now },
+			70000,
+		);
+		return { wait, elapsed: () => now };
+	};
+	// The file arrives after 20 s: longer than the 15 s the wait starts with.
+	const slow = build((now) => (now < 20000 ? { ready: false, fetchingFromSite: true } : { ready: true, pageCountText: "/ 3" }));
+	assert.equal((await slow.wait(7, 15000, "https://grades.example.edu/s/1.pdf")).ok, true, "a viewer that says the file is still coming is waited for");
+	assert.equal(slow.elapsed(), 20000);
+	const stuck = build(() => ({ ready: false }));
+	await assert.rejects(() => stuck.wait(7, 15000, "https://grades.example.edu/s/1.pdf"), /Timed out waiting for Onhand PDF viewer/);
+	assert.equal(stuck.elapsed(), 15000, "a viewer that says nothing gets the usual wait");
+	const never = build(() => ({ ready: false, fetchingFromSite: true }));
+	await assert.rejects(() => never.wait(7, 15000, "https://grades.example.edu/s/1.pdf"));
+	assert.equal(never.elapsed(), 70000, "and the longer wait ends too");
+	const failed = build((now) => (now < 12000 ? { ready: false, fetchingFromSite: true } : { ready: false, error: "Timed out loading the PDF through its authenticated browser tab." }));
+	await assert.rejects(() => failed.wait(7, 15000, "https://grades.example.edu/s/1.pdf"), /failed to load the PDF: Timed out loading/);
+	assert.equal(failed.elapsed(), 12000, "a failure is still reported at once");
+
+	const viewer = await readFile(new URL("../packages/browser-extension/src/pdf-viewer.ts", import.meta.url), "utf8");
+	assert.match(viewer, /document\.body\?\.setAttribute\(PDF_FETCHING_FROM_SITE_ATTRIBUTE, "true"\);[\s\S]{0,400}type: "pdf-viewer:load-authorized-source"[\s\S]{0,200}finally \{[\s\S]{0,120}document\.body\?\.removeAttribute\(PDF_FETCHING_FROM_SITE_ATTRIBUTE\);/, "the viewer says so while the tab fetches the file, and stops saying so after");
+	assert.match(viewer, /fetchingFromSite: document\.body\?\.getAttribute\(PDF_FETCHING_FROM_SITE_ATTRIBUTE\) === "true",/);
+	assert.match(viewer, /const PDF_FETCHING_FROM_SITE_ATTRIBUTE = "data-onhand-pdf-fetching-from-site";/);
+	assert.match(background, /const ONHAND_PDF_VIEWER_FETCHING_FROM_SITE_ATTRIBUTE = "data-onhand-pdf-fetching-from-site";/, "one name on both sides");
+}
+
 async function main() {
 	await assertPdfViewerHandoffHelpers();
+	await assertViewerWaitsForASlowSite();
+	await assertFrozenTabIsWokenBeforeItsCommand();
 	await assertWebPageAtPdfAddressIsRecognised();
+	await assertCollapsedSectionLinksAreReported();
 	await assertProtectedPdfLoadsWhenDebuggerIsRefused();
+	await assertDownloadLinksOpenInOnhandViewer();
+	await assertDownloadLinkViewerTakesTheFileName();
+	await assertPdfToolsOnAWebPageSayWhy();
 	await assertDetachedPdfViewerOpenRouting();
 	await assertChromeWebStoreTabsAreNamedUnreadable();
 	await assertWelcomePageOpensOnlyAfterStoreInstall();
