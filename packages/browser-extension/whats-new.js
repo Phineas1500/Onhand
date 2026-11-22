@@ -8,6 +8,14 @@
 // releases sees the newest few lines.
 globalThis.ONHAND_WHATS_NEW = Object.freeze([
 	{
+		version: "0.4.21",
+		items: [
+			"PDFs from course sites such as Canvas and Gradescope open in Onhand's viewer, including download links and links that have expired.",
+			"Each note on a page has a short title of its own, and highlights a page reload removed come back when you ask a follow-up.",
+			"ChatGPT sign-in: GPT-6.2 Sol, and a choice of Standard, Fast or Ultrafast speed.",
+		],
+	},
+	{
 		version: "0.4.20",
 		items: [
 			"Long PDFs stay fast: highlights and search in a book of hundreds of pages no longer time out, and the viewer uses much less memory.",
