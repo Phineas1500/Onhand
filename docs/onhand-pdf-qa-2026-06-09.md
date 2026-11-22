@@ -12,7 +12,7 @@ Validate the PDF annotation path end-to-end in a real Chromium browser, beyond w
 
 ## Environment
 
-- Workspace: `/Users/sriram/Documents/Onhand` at the v0.2.9 release commit plus the fix below.
+- Workspace: `~/Documents/Onhand` at the v0.2.9 release commit plus the fix below.
 - Browser: Helium (Chromium) launched with a throwaway profile, `--load-extension` pointing at the repo's unpacked extension, and a CDP port. Branded Chrome 137+ removed `--load-extension` (the `DisableLoadExtensionCommandLineSwitch` feature flag no longer restores it in Chrome 149), so a Chromium-family binary is required for this harness.
 - Driver: `tmp/onhand-qa-driver.mjs` + `tmp/onhand-qa-turn.sh` send the same background messages the side panel sends (`sidebar:realtime-browser-tool`, `sidebar:submit-prompt`, `sidebar:fetch-state`, `sidebar:restore-session`) from an extension page over CDP. Mechanical tests need no model; behavioral tests used a real OpenAI API key in Provider API key mode.
 - Fixture server on `127.0.0.1:8765` (PDF.js-style fixture, Scholar-like fixture, real generated PDF).

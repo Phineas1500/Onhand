@@ -13,7 +13,7 @@ Evaluate whether Onhand follows its constitution across realistic learning and r
 
 ## Environment notes
 
-- Workspace: `/Users/sriram/Documents/Onhand`
+- Workspace: `~/Documents/Onhand`
 - Browser automation available in this session: real Chrome desktop control through Computer Use, plus shell/fixture-server checks for local test pages.
 - The project acceptance notes say Onhand side panel, options, and `chrome://extensions` normally require Computer Use. After Computer Use became available, I used it to reload the unpacked Onhand Dev extension from `chrome://extensions` and to validate the side panel in real Chrome.
 - Chrome's "Allow JavaScript from Apple Events" setting is disabled, so foreground annotation DOM inspection was not available. I relied on Computer Use accessibility trees, live screenshots, and visible Onhand activity/source panels for page-work review.
