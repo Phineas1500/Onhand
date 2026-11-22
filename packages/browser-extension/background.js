@@ -14871,7 +14871,11 @@ async function extractReadableContentInPage(options = {}) {
 		root: selectorFor(root),
 		blockCount: blocks.length,
 		charCount: markdown.length,
-		truncated: markdown.length >= maxChars,
+		// The size count includes the gaps between blocks, so a part can be full
+		// (and later blocks left out) while the joined text is a character or
+		// two under the limit. Going by the joined text reported such a part as
+		// the whole page.
+		truncated: usedChars >= maxChars,
 		pagingSupported: true,
 		startBlock,
 		queryUsed: queryTokens.length > 0,
@@ -17825,6 +17829,7 @@ const connectorToolDeps = {
 	runCommand: (name, args) => handleCommand(name, args),
 	isPdfTab: (tab) => isOwnExtensionPdfViewerUrl(tab?.url) || isLikelyPdfResourceUrl(tab?.url),
 	isOwnViewerUrl: (url) => isOwnExtensionPdfViewerUrl(url),
+	pdfSourceUrl: (url) => extractPdfSourceUrlFromViewerLikeUrl(url) || "",
 	async getLastReadTabId() {
 		const key = globalThis.OnhandConnector.LAST_READ_TAB_STORAGE_KEY;
 		const stored = await connectorSessionStorage().get({ [key]: null });
@@ -17835,8 +17840,13 @@ const connectorToolDeps = {
 	},
 	// Keeps a chat app's marks as a session in history and gives each mark a
 	// link the app can cite. Returns one link per mark, in order.
-	async recordMarks({ client, question, marks }) {
-		const saved = await getOnhandBrowserRuntime().recordConnectorMarks({ client, question, marks });
+	// Which conversation in the chat app a call belongs to, with the tab made
+	// ready for it (another conversation's marks are cleared from it).
+	async beginMarks({ client, chat, question, tab }) {
+		return await getOnhandBrowserRuntime().beginConnectorMarks({ client, chat, question, tabId: tab?.id });
+	},
+	async recordMarks({ client, chat, question, marks }) {
+		const saved = await getOnhandBrowserRuntime().recordConnectorMarks({ client, chat, question, marks });
 		const sessionId = String(saved?.sessionId || "");
 		const actionKeys = Array.isArray(saved?.actionKeys) ? saved.actionKeys : [];
 		if (!sessionId) return [];

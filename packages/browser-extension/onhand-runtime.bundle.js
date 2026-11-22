@@ -99259,14 +99259,80 @@ function createOnhandBrowserRuntime(host) {
     });
     return await result;
   }
-  const CONNECTOR_SESSION_WINDOW_MS = 30 * 60 * 1e3;
   const CONNECTOR_TURN_WINDOW_MS = 3 * 60 * 1e3;
+  const CONNECTOR_CHAT_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+  const CONNECTOR_CHAT_CODE_PATTERN = /^[a-hjkmnp-z2-9]{8}$/;
+  const cleanConnectorChatCode = (value) => {
+    const code = String(value ?? "").trim().toLowerCase();
+    return CONNECTOR_CHAT_CODE_PATTERN.test(code) ? code : "";
+  };
+  const newConnectorChatCode = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (value) => CONNECTOR_CHAT_CODE_ALPHABET[value % CONNECTOR_CHAT_CODE_ALPHABET.length]).join("");
+  function findConnectorSession(store2, call) {
+    const sessions = Object.values(store2.sessions).filter((candidate) => candidate?.connector);
+    if (call.chat) return sessions.find((candidate) => candidate.connector.chat === call.chat) || null;
+    const latest = sessions.filter((candidate) => candidate.connector.client === call.client).sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))[0];
+    const last = latest?.turns[latest.turns.length - 1];
+    const sameAnswer = last && typeof last.connectorOrigin === "string" && Date.now() - (Date.parse(last.createdAt) || 0) < CONNECTOR_TURN_WINDOW_MS && (!call.question || !last.userPrompt || last.userPrompt === call.question);
+    return sameAnswer ? latest : null;
+  }
+  const CONNECTOR_TAB_CHATS_STORAGE_KEY = "onhandConnectorTabChats";
+  let connectorTabChats = null;
+  const connectorLayerKey = (session) => session.connector?.chat || session.id;
+  async function loadConnectorTabChats() {
+    if (connectorTabChats) return connectorTabChats;
+    let stored = null;
+    try {
+      stored = (await globalThis.chrome?.storage?.session?.get?.({ [CONNECTOR_TAB_CHATS_STORAGE_KEY]: {} }))?.[CONNECTOR_TAB_CHATS_STORAGE_KEY];
+    } catch {
+    }
+    connectorTabChats = stored && typeof stored === "object" ? { ...stored } : {};
+    return connectorTabChats;
+  }
+  async function noteConnectorTabChat(tabId, key) {
+    const shown = await loadConnectorTabChats();
+    if ((shown[String(tabId)] || "") === key) return;
+    if (key) shown[String(tabId)] = key;
+    else delete shown[String(tabId)];
+    const tabIds = Object.keys(shown);
+    if (tabIds.length > 300) for (const stale of tabIds.slice(0, 100)) delete shown[stale];
+    try {
+      await globalThis.chrome?.storage?.session?.set?.({ [CONNECTOR_TAB_CHATS_STORAGE_KEY]: shown });
+    } catch {
+    }
+  }
+  async function showConnectorChatOnTab(tabId, key) {
+    const shown = await loadConnectorTabChats();
+    if (shown[String(tabId)] === key) return false;
+    try {
+      await host.runCommand("clear_annotations", { tabId });
+    } catch (error2) {
+      host.log?.("connector tab clear failed", error2);
+    }
+    await noteConnectorTabChat(tabId, key);
+    return true;
+  }
   let connectorRecordQueue = Promise.resolve();
   let sessionListRevision = Date.now();
+  async function beginConnectorMarks(input = {}) {
+    const begin = async () => {
+      const client = compactActionText(input.client).slice(0, 40) || CONNECTOR_GENERIC_CLIENT;
+      const question = truncate2(compactActionText(input.question), 200);
+      const given = cleanConnectorChatCode(input.chat);
+      const session = findConnectorSession(await loadStore(), { client, chat: given, question });
+      const chat = session?.connector?.chat || given || newConnectorChatCode();
+      const cleared = Number.isInteger(input.tabId) ? await showConnectorChatOnTab(input.tabId, chat) : false;
+      return { chat, cleared };
+    };
+    const result = connectorRecordQueue.then(begin);
+    connectorRecordQueue = result.catch(() => {
+    });
+    return await result;
+  }
   async function recordConnectorMarks(input = {}) {
     const save = async () => {
       const client = compactActionText(input.client).slice(0, 40) || CONNECTOR_GENERIC_CLIENT;
       const question = truncate2(compactActionText(input.question), 200);
+      const given = cleanConnectorChatCode(input.chat);
       const marks = (Array.isArray(input.marks) ? input.marks : []).map((mark) => {
         const highlight = mark?.highlight ? buildPageAction("browser_highlight_text", mark.highlight) : null;
         if (!highlight?.annotationId) return null;
@@ -99280,19 +99346,26 @@ function createOnhandBrowserRuntime(host) {
         return { highlight, note };
       });
       const placed = marks.filter(Boolean);
-      if (!placed.length) return { sessionId: "", actionKeys: marks.map(() => "") };
+      if (!placed.length) return { sessionId: "", actionKeys: marks.map(() => ""), chat: given };
       const store2 = await loadStore();
       const now = Date.now();
       const age = (iso) => now - (Date.parse(iso) || 0);
-      let session = Object.values(store2.sessions).filter((candidate) => candidate?.connector && candidate.connector.client === client && age(candidate.updatedAt) < CONNECTOR_SESSION_WINDOW_MS).sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))[0];
+      let session = findConnectorSession(store2, { client, chat: given, question });
+      const chat = session?.connector?.chat || given || newConnectorChatCode();
       const firstPage = compactActionText(placed[0].highlight.title) || compactActionText(placed[0].highlight.url);
       if (!session) {
         session = createSession(`${client}: ${buildSessionTitleFromPrompt(question || firstPage || "highlights")}`);
-        session.connector = { client, titled: Boolean(question) };
+        session.connector = { client, chat, titled: Boolean(question) };
         store2.sessions[session.id] = session;
-      } else if (question && !session.connector.titled) {
-        session.name = `${client}: ${buildSessionTitleFromPrompt(question)}`;
-        session.connector = { ...session.connector, titled: true };
+      } else {
+        if (!session.connector.chat) session.connector = { ...session.connector, chat };
+        if (question && !session.connector.titled) {
+          session.name = `${client}: ${buildSessionTitleFromPrompt(question)}`;
+          session.connector = { ...session.connector, titled: true };
+        }
+      }
+      for (const tabId of new Set(placed.map((mark) => mark.highlight.tabId))) {
+        if (typeof tabId === "number") await noteConnectorTabChat(tabId, chat);
       }
       const last = session.turns[session.turns.length - 1];
       const continues = Boolean(
@@ -99316,7 +99389,7 @@ function createOnhandBrowserRuntime(host) {
       if (store2.currentSessionId === session.id && !activeRequest) {
         await publishState({ currentSession: buildSessionState(session), turns: session.turns, messages: buildConversationMessages(session.messages), pageActions: session.pageActions });
       }
-      return { sessionId: session.id, actionKeys: marks.map((mark) => mark ? (mark.note || mark.highlight).key : "") };
+      return { sessionId: session.id, actionKeys: marks.map((mark) => mark ? (mark.note || mark.highlight).key : ""), chat };
     };
     const result = connectorRecordQueue.then(save);
     connectorRecordQueue = result.catch(() => {
@@ -101944,6 +102017,7 @@ function createOnhandBrowserRuntime(host) {
         } catch (error2) {
           failures.push(error2?.message || String(error2));
         }
+        await noteConnectorTabChat(tabId, session.connector ? connectorLayerKey(session) : "");
       }
       let restoredAnnotations = 0;
       let recoveredAnnotations = 0;
@@ -102179,6 +102253,9 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
     },
     async recordLiveTranscriptTurns(request2) {
       return await recordLiveTranscriptTurns(request2);
+    },
+    async beginConnectorMarks(request2) {
+      return await beginConnectorMarks(request2);
     },
     async recordConnectorMarks(request2) {
       return await recordConnectorMarks(request2);
@@ -103103,6 +103180,7 @@ Mark and answer from this text. Call browser_extract_content again only to conti
       const actionPdfAnchor = action.pdfAnchor || pairedHighlight?.pdfAnchor || null;
       const tab = await resolveActionTab(action);
       const tabId = typeof tab?.id === "number" ? tab.id : void 0;
+      if (session.connector && actionBelongsToSession && typeof tabId === "number") await showConnectorChatOnTab(tabId, connectorLayerKey(session));
       let changed = false;
       const targetAnnotationId = action.type === "note" && pairedHighlight?.annotationId ? compactActionText(pairedHighlight.annotationId) : compactActionText(action.annotationId);
       const targetKind = action.type === "note" ? "note" : "annotation";

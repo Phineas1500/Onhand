@@ -90,7 +90,9 @@ interface RuntimeSession {
 	// through the connector. Its notes were written by that app, so such a
 	// session is a record only: nothing in it goes into Onhand's own model
 	// context, and a question asked while it is open starts a new session.
-	connector?: { client: string; titled?: boolean };
+	// chat: the code that names the conversation in the chat app (see
+	// recordConnectorMarks).
+	connector?: { client: string; titled?: boolean; chat?: string };
 }
 
 interface RuntimeSettings {
@@ -15394,20 +15396,126 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	// reload. Onhand never sees that app's answer: the record is the page, the
 	// highlights, their notes and (when the app gives one) the question.
 	//
-	// One session per app and stretch of use (marks within half an hour of the
-	// last go to the same session), one turn per question. The reader's own
-	// session is never switched: the new one only appears in history.
-	const CONNECTOR_SESSION_WINDOW_MS = 30 * 60 * 1000;
+	// One session per conversation in the chat app, one turn per question.
+	// Onhand cannot see which conversation a call comes from, so it gives each
+	// one a short code with its first highlights and the app's model passes it
+	// back on later calls:
+	//   1. a call that carries a known code joins that conversation's
+	//      session, however long ago it was last used;
+	//   2. a call with no code is a new conversation, except the later calls
+	//      of one answer (same app, within the turn window, and not a
+	//      different question), where a model sometimes leaves the code off;
+	//   3. a code no session has (its session was deleted) starts a session
+	//      under that code.
+	// Two conversations about the same page therefore stay apart, in history
+	// and on the page (see showConnectorChatOnTab). The reader's own session
+	// is never switched: a new one only appears in history.
 	const CONNECTOR_TURN_WINDOW_MS = 3 * 60 * 1000;
+	// Letters and digits that are not mistaken for one another. The code is a
+	// name, not a secret: the pairing code is what lets an app call at all.
+	const CONNECTOR_CHAT_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+	const CONNECTOR_CHAT_CODE_PATTERN = /^[a-hjkmnp-z2-9]{8}$/;
+	const cleanConnectorChatCode = (value: unknown) => {
+		const code = String(value ?? "").trim().toLowerCase();
+		return CONNECTOR_CHAT_CODE_PATTERN.test(code) ? code : "";
+	};
+	const newConnectorChatCode = () =>
+		Array.from(crypto.getRandomValues(new Uint8Array(8)), (value) => CONNECTOR_CHAT_CODE_ALPHABET[value % CONNECTOR_CHAT_CODE_ALPHABET.length]).join("");
+
+	function findConnectorSession(store: any, call: { client: string; chat: string; question: string }) {
+		const sessions = (Object.values(store.sessions) as RuntimeSession[]).filter((candidate) => candidate?.connector);
+		if (call.chat) return sessions.find((candidate) => candidate.connector!.chat === call.chat) || null;
+		const latest = sessions
+			.filter((candidate) => candidate.connector!.client === call.client)
+			.sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))[0];
+		const last = latest?.turns[latest.turns.length - 1];
+		// Two questions that differ are two answers, and so two conversations.
+		const sameAnswer =
+			last &&
+			typeof last.connectorOrigin === "string" &&
+			Date.now() - (Date.parse(last.createdAt) || 0) < CONNECTOR_TURN_WINDOW_MS &&
+			(!call.question || !last.userPrompt || last.userPrompt === call.question);
+		return sameAnswer ? latest : null;
+	}
+
+	// A tab shows one conversation's marks at a time. Which one is kept per
+	// tab for as long as the browser stays open (the worker sleeps between
+	// calls), under the conversation's code, or the session's id for a
+	// session made before codes.
+	const CONNECTOR_TAB_CHATS_STORAGE_KEY = "onhandConnectorTabChats";
+	let connectorTabChats: Record<string, string> | null = null;
+	const connectorLayerKey = (session: RuntimeSession) => session.connector?.chat || session.id;
+
+	async function loadConnectorTabChats() {
+		if (connectorTabChats) return connectorTabChats;
+		let stored: any = null;
+		try {
+			stored = (await (globalThis as any).chrome?.storage?.session?.get?.({ [CONNECTOR_TAB_CHATS_STORAGE_KEY]: {} }))?.[CONNECTOR_TAB_CHATS_STORAGE_KEY];
+		} catch {}
+		connectorTabChats = stored && typeof stored === "object" ? { ...stored } : {};
+		return connectorTabChats as Record<string, string>;
+	}
+
+	// key "": the tab no longer shows a chat app's marks (the reader put their
+	// own session's marks back on it).
+	async function noteConnectorTabChat(tabId: number, key: string) {
+		const shown = await loadConnectorTabChats();
+		if ((shown[String(tabId)] || "") === key) return;
+		if (key) shown[String(tabId)] = key;
+		else delete shown[String(tabId)];
+		// Tab numbers are never reused in a browser session; the oldest go.
+		const tabIds = Object.keys(shown);
+		if (tabIds.length > 300) for (const stale of tabIds.slice(0, 100)) delete shown[stale];
+		try {
+			await (globalThis as any).chrome?.storage?.session?.set?.({ [CONNECTOR_TAB_CHATS_STORAGE_KEY]: shown });
+		} catch {}
+	}
+
+	// Before a conversation's mark is drawn on a tab (a new highlight, or one
+	// put back by its link): when the tab shows anything else, Onhand's marks
+	// there are removed first, so each conversation marks a fresh copy of the
+	// page. The marks removed stay in history and come back through their own
+	// links or "Restore pages".
+	async function showConnectorChatOnTab(tabId: number, key: string) {
+		const shown = await loadConnectorTabChats();
+		if (shown[String(tabId)] === key) return false;
+		try {
+			await host.runCommand("clear_annotations", { tabId });
+		} catch (error) {
+			host.log?.("connector tab clear failed", error);
+		}
+		await noteConnectorTabChat(tabId, key);
+		return true;
+	}
+
 	let connectorRecordQueue: Promise<unknown> = Promise.resolve();
 	// Starts at the clock so a restarted worker never repeats a value an open
 	// panel has already seen.
 	let sessionListRevision = Date.now();
 
+	// Called before a chat app's highlights are drawn on a tab: says which
+	// conversation the call belongs to (its code, new when it is a new
+	// conversation) and clears the tab when it shows another's marks.
+	async function beginConnectorMarks(input: any = {}) {
+		const begin = async () => {
+			const client = compactActionText(input.client).slice(0, 40) || CONNECTOR_GENERIC_CLIENT;
+			const question = truncate(compactActionText(input.question), 200);
+			const given = cleanConnectorChatCode(input.chat);
+			const session = findConnectorSession(await loadStore(), { client, chat: given, question });
+			const chat = session?.connector?.chat || given || newConnectorChatCode();
+			const cleared = Number.isInteger(input.tabId) ? await showConnectorChatOnTab(input.tabId, chat) : false;
+			return { chat, cleared };
+		};
+		const result = connectorRecordQueue.then(begin);
+		connectorRecordQueue = result.catch(() => {});
+		return await result;
+	}
+
 	async function recordConnectorMarks(input: any = {}) {
 		const save = async () => {
 			const client = compactActionText(input.client).slice(0, 40) || CONNECTOR_GENERIC_CLIENT;
 			const question = truncate(compactActionText(input.question), 200);
+			const given = cleanConnectorChatCode(input.chat);
 			const marks: Array<{ highlight: PageAction; note: PageAction | null } | null> = (Array.isArray(input.marks) ? input.marks : []).map((mark: any) => {
 				const highlight = mark?.highlight ? buildPageAction("browser_highlight_text", mark.highlight) : null;
 				if (!highlight?.annotationId) return null;
@@ -15423,23 +15531,30 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				return { highlight, note };
 			});
 			const placed = marks.filter(Boolean) as Array<{ highlight: PageAction; note: PageAction | null }>;
-			if (!placed.length) return { sessionId: "", actionKeys: marks.map(() => "") };
+			if (!placed.length) return { sessionId: "", actionKeys: marks.map(() => ""), chat: given };
 
 			const store = await loadStore();
 			const now = Date.now();
 			const age = (iso: string) => now - (Date.parse(iso) || 0);
-			let session = (Object.values(store.sessions) as RuntimeSession[])
-				.filter((candidate) => candidate?.connector && candidate.connector.client === client && age(candidate.updatedAt) < CONNECTOR_SESSION_WINDOW_MS)
-				.sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))[0];
+			let session = findConnectorSession(store, { client, chat: given, question }) as RuntimeSession;
+			const chat = session?.connector?.chat || given || newConnectorChatCode();
 			const firstPage = compactActionText(placed[0].highlight.title) || compactActionText(placed[0].highlight.url);
 			if (!session) {
 				session = createSession(`${client}: ${buildSessionTitleFromPrompt(question || firstPage || "highlights")}`);
-				session.connector = { client, titled: Boolean(question) };
+				session.connector = { client, chat, titled: Boolean(question) };
 				store.sessions[session.id] = session;
-			} else if (question && !session.connector!.titled) {
-				// Titled after its page until the app says what was asked.
-				session.name = `${client}: ${buildSessionTitleFromPrompt(question)}`;
-				session.connector = { ...session.connector!, titled: true };
+			} else {
+				// A session from before codes gets one when it is continued.
+				if (!session.connector!.chat) session.connector = { ...session.connector!, chat };
+				if (question && !session.connector!.titled) {
+					// Titled after its page until the app says what was asked.
+					session.name = `${client}: ${buildSessionTitleFromPrompt(question)}`;
+					session.connector = { ...session.connector!, titled: true };
+				}
+			}
+			// The marks are on those tabs now, under this conversation.
+			for (const tabId of new Set(placed.map((mark) => mark.highlight.tabId))) {
+				if (typeof tabId === "number") await noteConnectorTabChat(tabId, chat);
 			}
 
 			// A model often places an answer's highlights over two or three calls
@@ -15471,7 +15586,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			}
 			// A link to a mark opens its note when it has one, so that a mark
 			// lost to a reload comes back whole.
-			return { sessionId: session.id, actionKeys: marks.map((mark) => (mark ? (mark.note || mark.highlight).key : "")) };
+			return { sessionId: session.id, actionKeys: marks.map((mark) => (mark ? (mark.note || mark.highlight).key : "")), chat };
 		};
 		const result = connectorRecordQueue.then(save);
 		connectorRecordQueue = result.catch(() => {});
@@ -18467,6 +18582,9 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				} catch (error: any) {
 					failures.push(error?.message || String(error));
 				}
+				// The tab now shows this session's marks: a chat app's
+				// conversation, or the reader's own.
+				await noteConnectorTabChat(tabId, session.connector ? connectorLayerKey(session) : "");
 			}
 
 			let restoredAnnotations = 0;
@@ -18751,6 +18869,9 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			return await recordLiveTranscriptTurns(request);
 		},
 
+		async beginConnectorMarks(request: any) {
+			return await beginConnectorMarks(request);
+		},
 		async recordConnectorMarks(request: any) {
 			return await recordConnectorMarks(request);
 		},
@@ -19791,6 +19912,9 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			const actionPdfAnchor = action.pdfAnchor || pairedHighlight?.pdfAnchor || null;
 			const tab = await resolveActionTab(action);
 			const tabId = typeof tab?.id === "number" ? tab.id : undefined;
+			// A chat app's mark, opened by its link: when the tab shows another
+			// conversation's marks they go first, and this one is put back below.
+			if (session.connector && actionBelongsToSession && typeof tabId === "number") await showConnectorChatOnTab(tabId, connectorLayerKey(session));
 			let changed = false;
 			const targetAnnotationId =
 				action.type === "note" && pairedHighlight?.annotationId ? compactActionText(pairedHighlight.annotationId) : compactActionText(action.annotationId);

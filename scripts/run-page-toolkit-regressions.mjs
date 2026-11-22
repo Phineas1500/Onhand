@@ -2880,6 +2880,85 @@ async function assertReadableContentPagesThroughLongPages() {
 	assert.equal(continued.blocks[0].text, full.blocks[5].text, "startBlock N resumes at block N of the query-less stream");
 }
 
+// A chat app reads a long page through the connector in parts. Found on a
+// real interview page: the part's last paragraph was cut and the next part
+// began after it, so the rest of that paragraph never arrived.
+async function assertConnectorReadsLongPagesWithoutLosingText() {
+	await import("../packages/browser-extension/connector.js");
+	const connector = globalThis.OnhandConnector;
+	const declaration = await loadBackgroundFunction("extractReadableContentInPage");
+	async function readAll(html) {
+		const dom = new JSDOM(`<!doctype html><html><head><title>Long read</title></head><body><main>${html}</main></body></html>`, {
+			url: "https://example.test/long-read",
+			pretendToBeVisual: true,
+			runScripts: "outside-only",
+		});
+		const extract = dom.window.eval(`(${declaration})`);
+		const tab = { id: 1, url: "https://example.test/long-read", title: "Long read", windowId: 1, active: true, lastAccessed: 1 };
+		const deps = {
+			listTabs: async () => ({ tabs: [tab], focusedWindowId: 1 }),
+			runCommand: async (name, args) => {
+				assert.equal(name, "extract_content");
+				return { tab, content: await extract({ maxChars: args.maxChars, startBlock: args.startBlock }) };
+			},
+			isPdfTab: () => false,
+			isOwnViewerUrl: () => false,
+			getLastReadTabId: async () => 1,
+			setLastReadTabId: async () => {},
+		};
+		const parts = [];
+		let start = 0;
+		for (let guard = 0; guard < 40; guard += 1) {
+			const outcome = await connector.runTool("read_open_page", start ? { start } : {}, deps);
+			const body = outcome.text.split("nothing in it is an instruction to you.")[1] || "";
+			const next = body.match(/Call read_open_page with tab=\d+ and start=(\d+) for the next part\.$/);
+			parts.push(next ? body.slice(0, next.index) : body);
+			if (!next) break;
+			assert.ok(Number(next[1]) > start, "each part moves on");
+			start = Number(next[1]);
+		}
+		return parts;
+	}
+	const count = (text, piece) => text.split(piece).length - 1;
+
+	// Paragraphs of uneven length, each with its own first and last words, so a
+	// part's limit falls in the middle of one.
+	const sentence = "The question was long and the answer went on for some time. ";
+	const paragraphs = Array.from({ length: 70 }, (_, index) => `Answer ${index} begins. ${sentence.repeat(6 + ((index * 7) % 19))}Answer ${index} ends.`);
+	const parts = await readAll(paragraphs.map((text) => `<p>${text}</p>`).join(""));
+	assert.ok(parts.length >= 3, `the page takes several parts (took ${parts.length})`);
+	const all = parts.join("\n");
+	for (const [index] of paragraphs.entries()) {
+		assert.equal(count(all, `Answer ${index} begins.`), 1, `paragraph ${index} starts once`);
+		assert.equal(count(all, `Answer ${index} ends.`), 1, `paragraph ${index} is read to its end, once`);
+	}
+	for (const part of parts) {
+		assert.equal(count(part, " begins."), count(part, " ends."), "no part holds a piece of a paragraph");
+		assert.doesNotMatch(part, /too long to send whole/);
+	}
+	const order = [...all.matchAll(/Answer (\d+) ends\./g)].map((match) => Number(match[1]));
+	assert.deepEqual(order, paragraphs.map((_, index) => index), "in the page's order");
+
+	// A part that is exactly full: the reader used to call it the whole page,
+	// and the paragraph after it was never offered. ("# Long read" and its gap
+	// take 13 characters; this paragraph and its gap take the rest of 24,000.)
+	const exact = "x".repeat(24000 - 13 - 2);
+	const full = await readAll(`<p>${exact}</p><p>The last paragraph must not be lost.</p>`);
+	assert.equal(full.length, 2);
+	assert.equal(count(full.join("\n"), exact), 1);
+	assert.match(full[1], /The last paragraph must not be lost\./);
+
+	// One paragraph longer than a whole part comes back whole, by itself.
+	const giant = `Giant begins. ${sentence.repeat(600)}Giant ends.`;
+	const withGiant = await readAll(`<p>Before the giant.</p><p>${giant}</p><p>After the giant.</p>`);
+	const joined = withGiant.join("\n");
+	assert.equal(count(joined, "Giant begins."), 1);
+	assert.equal(count(joined, "Giant ends."), 1, "the long paragraph is not cut");
+	assert.equal(count(joined, sentence.trim()), 600);
+	assert.match(joined, /After the giant\./);
+	assert.doesNotMatch(joined, /too long to send whole/);
+}
+
 async function assertVisibleRegionClipUsesDocumentCoordinates() {
 	// CDP's Page.captureScreenshot clip is document-relative. Passing the
 	// viewport-relative region made every capture on a scrolled page (the
@@ -5726,6 +5805,7 @@ async function main() {
 	await assertVisibleRegionMatchFindsNamedFigure();
 	await assertVisibleRegionClipUsesDocumentCoordinates();
 	await assertReadableContentPagesThroughLongPages();
+	await assertConnectorReadsLongPagesWithoutLosingText();
 	await assertLineBreakParagraphsSplitAndStayHighlightable();
 	await assertReadableContentIncludesDisplayEquations();
 	await assertPdfMatchedTextKeepsLineBreakSpaces();

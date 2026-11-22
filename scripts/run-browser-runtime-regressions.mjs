@@ -13506,7 +13506,9 @@ async function assertConnectorMarksBecomeAHistorySession() {
 	resent.highlight.annotation.reusedExisting = true;
 	const second = await runtime.recordConnectorMarks({ client: "Claude", question, marks: [mark("c3", "Cold ovens give a dense crumb.", "What goes wrong otherwise."), resent] });
 	assert.deepEqual(second.actionKeys, ["note:c3", "note:c1"]);
-	const third = await runtime.recordConnectorMarks({ client: "Claude", question: "How long does it bake?", marks: [mark("c4", "Bake for forty minutes.")] });
+	// A later question in the same conversation carries the code its first highlights were given.
+	assert.match(first.chat, /^[a-hjkmnp-z2-9]{8}$/);
+	const third = await runtime.recordConnectorMarks({ client: "Claude", chat: first.chat, question: "How long does it bake?", marks: [mark("c4", "Bake for forty minutes.")] });
 	assert.equal(second.sessionId, first.sessionId);
 	assert.equal(third.sessionId, first.sessionId);
 	// Another app's marks are kept apart, and an app that gave no name still gets a session.
@@ -13517,7 +13519,7 @@ async function assertConnectorMarksBecomeAHistorySession() {
 	assert.equal(sessions.find((session) => session.id === other.sessionId).title, "ChatGPT: Replay smoke page", "with no question, the page names the session");
 	assert.equal(sessions.find((session) => session.id === unnamed.sessionId).connectorClient, "A chat app");
 	// The page's title gives way once the app says what was asked.
-	await runtime.recordConnectorMarks({ client: "ChatGPT", question: "Which fruit?", marks: [mark("g2", "Use unwaxed lemons.")] });
+	await runtime.recordConnectorMarks({ client: "ChatGPT", chat: other.chat, question: "Which fruit?", marks: [mark("g2", "Use unwaxed lemons.")] });
 	assert.equal((await runtime.listSessions()).sessions.find((session) => session.id === other.sessionId).title, "ChatGPT: Which fruit");
 
 	const saved = getStoredStore().sessions[first.sessionId];
@@ -13595,6 +13597,186 @@ async function assertConnectorMarksBecomeAHistorySession() {
 	assert.equal(after.sessions[first.sessionId].turns.length, 2, "the record is unchanged");
 	assert.doesNotMatch(JSON.stringify(after.sessions[state.currentSession.sessionId]), /lifts the batter|carbon dioxide/);
 	console.log("Connector marks: history session per app, one turn per question, framed notes on restore, links without switching, and own-session questions passed");
+}
+
+// Two reports from the owner. First: a second question in the same Claude
+// chat, hours after the first, became a session of its own. Second: two chats
+// that mark up the same page, each about its own topic, must not share marks.
+// So each conversation has a code, which its later calls carry.
+async function assertConnectorMarksStayWithTheirConversation() {
+	installChromeStorageStub();
+	// As in the browser: kept while the browser is open, across worker restarts.
+	globalThis.chrome.storage.session = {
+		data: {},
+		async get(defaults) {
+			return { ...defaults, ...this.data };
+		},
+		async set(values) {
+			Object.assign(this.data, values);
+		},
+	};
+	const noteGone = { value: false };
+	const host = createReplayHost({
+		scrollToAnnotationResult(args) {
+			if (noteGone.value) throw new Error("No annotation with that id is on the page.");
+			return {};
+		},
+	});
+	let runtime = await configureSmokeRuntime(host);
+	const article = replaySmokeTab();
+	const mark = (id, text) => ({ highlight: { tab: article, annotation: { annotationId: id, matchedText: text } }, note: null });
+	const clears = () => host.calls.filter((call) => call.name === "clear_annotations" && call.args?.tabId === article.id).length;
+	// One call as the connector makes it: the conversation is settled and the tab made ready, then the marks are kept.
+	const call = async ({ chat = "", question = "", client = "Claude" }, marks) => {
+		const before = clears();
+		const begun = await runtime.beginConnectorMarks({ client, chat, question, tabId: article.id });
+		const saved = await runtime.recordConnectorMarks({ client, chat: begun.chat, question, marks });
+		return { ...saved, cleared: clears() - before };
+	};
+	// Time passes: every chat-app session and its turns are moved back, and the worker starts again from what is saved.
+	const hoursPass = async (hours) => {
+		const store = getStoredStore();
+		const earlier = (iso) => new Date(Date.parse(iso) - hours * 3600 * 1000).toISOString();
+		for (const session of Object.values(store.sessions)) {
+			if (!session.connector) continue;
+			session.updatedAt = earlier(session.updatedAt);
+			for (const turn of session.turns) turn.createdAt = earlier(turn.createdAt);
+		}
+		await globalThis.chrome.storage.local.set(storedStoreEntries(store));
+		runtime = await configureSmokeRuntime(host);
+	};
+	const questionsOf = (id) => getStoredStore().sessions[id].turns.map((turn) => turn.userPrompt);
+
+	// A conversation's first highlights: a clean page, a session, and a code for the conversation.
+	const budget = await call({ question: "What does he say about the budget?" }, [mark("a1", "The budget passed on Friday.")]);
+	assert.match(budget.chat, /^[a-hjkmnp-z2-9]{8}$/);
+	assert.equal(budget.cleared, 1, "a new conversation starts on a clean page");
+	assert.equal(getStoredStore().sessions[budget.sessionId].connector.chat, budget.chat);
+
+	// The same conversation the next morning, carrying its code: the same session, and the page is left as it is.
+	await hoursPass(9);
+	const vote = await call({ chat: budget.chat, question: "And about the vote?" }, [mark("a2", "The vote was close.")]);
+	assert.equal(vote.sessionId, budget.sessionId, "a later question in the same conversation joins its session");
+	assert.equal(vote.chat, budget.chat);
+	assert.equal(vote.cleared, 0, "its earlier marks stay on the page");
+	assert.deepEqual(questionsOf(budget.sessionId), ["What does he say about the budget?", "And about the vote?"]);
+	assert.equal((await runtime.listSessions()).sessions.find((session) => session.id === budget.sessionId).title, "Claude: What does he say about the budget");
+
+	// Another conversation about the same page, moments later: its own session, its own code, a clean page.
+	const style = await call({ question: "How would you describe his speaking style?" }, [mark("b1", "He paused before each answer.")]);
+	assert.notEqual(style.sessionId, budget.sessionId, "another conversation about the same page is kept apart");
+	assert.notEqual(style.chat, budget.chat);
+	assert.equal(style.cleared, 1, "the first conversation's marks are taken off the page for it");
+	// The first conversation again: the page is cleared of the second one's marks.
+	const again = await call({ chat: budget.chat, question: "What did he promise?" }, [mark("a3", "He promised a vote by spring.")]);
+	assert.equal(again.sessionId, budget.sessionId);
+	assert.equal(again.cleared, 1);
+	assert.deepEqual(questionsOf(style.sessionId), ["How would you describe his speaking style?"]);
+	assert.equal(questionsOf(budget.sessionId).length, 3);
+
+	// One answer in two calls, the second without the code (a missed quote sent again): the same session and turn, and nothing is cleared.
+	const resent = await call({ question: "What did he promise?" }, [mark("a4", "The vote would be public.")]);
+	assert.equal(resent.sessionId, budget.sessionId);
+	assert.equal(resent.chat, budget.chat);
+	assert.equal(resent.cleared, 0);
+	assert.equal(questionsOf(budget.sessionId).length, 3);
+	// And one with neither a code nor a question.
+	assert.equal((await call({}, [mark("a5", "It would be held in March.")])).sessionId, budget.sessionId);
+	// A different question with no code is another conversation, even seconds later.
+	const unrelated = await call({ question: "Who else was in the room?" }, [mark("c1", "Two aides sat behind him.")]);
+	assert.equal(new Set([budget.sessionId, style.sessionId, unrelated.sessionId]).size, 3);
+	// So is the same question once the answer is long over.
+	await hoursPass(1);
+	assert.notEqual((await call({ question: "Who else was in the room?" }, [mark("c2", "A third aide arrived late.")])).sessionId, unrelated.sessionId);
+
+	// A code no session has (its session was deleted): a session of its own, under that code. Anything else is not a code.
+	const orphan = await call({ chat: "zzzzzzzz", question: "What was the last question?" }, [mark("d1", "The last question was about steel.")]);
+	assert.equal(orphan.chat, "zzzzzzzz");
+	assert.equal(getStoredStore().sessions[orphan.sessionId].connector.chat, "zzzzzzzz");
+	const junk = await call({ chat: "<script>alert(1)</script>", question: "And the first?" }, [mark("e1", "The first was about bridges.")]);
+	assert.match(junk.chat, /^[a-hjkmnp-z2-9]{8}$/);
+
+	// A link to a mark of the first conversation, while the page shows another's marks: those go, and the mark is put back.
+	noteGone.value = true;
+	let before = clears();
+	let callsBefore = host.calls.length;
+	await runtime.activateAction(budget.actionKeys[0], { sessionPath: budget.sessionId });
+	assert.equal(clears() - before, 1, "the other conversation's marks are cleared before the mark is put back");
+	const names = host.calls.slice(callsBefore).map((entry) => entry.name);
+	assert.ok(names.indexOf("clear_annotations") < names.lastIndexOf("highlight_text"), `the mark is drawn after the page is cleared: ${names.join(", ")}`);
+	// Another link of the same conversation: nothing is cleared.
+	before = clears();
+	await runtime.activateAction(vote.actionKeys[0], { sessionPath: budget.sessionId });
+	assert.equal(clears() - before, 0);
+	noteGone.value = false;
+	// And the conversation's next highlights go on top of what its links put back, after a worker restart too.
+	runtime = await configureSmokeRuntime(host);
+	assert.equal((await call({ chat: budget.chat, question: "One more on the budget" }, [mark("a6", "The budget is balanced.")])).cleared, 0);
+
+	// "Restore pages" on the second conversation's session puts its marks on the tab; its next highlights are added to them.
+	await runtime.restoreSession(style.sessionId);
+	assert.equal((await call({ chat: style.chat, question: "Was he nervous?" }, [mark("b2", "His hands were steady.")])).cleared, 0);
+	// The reader's own session restored onto the tab: the next chat highlights start clean again.
+	const ownSessionId = (await runtime.getState()).currentSession.sessionId;
+	const ownStore = getStoredStore();
+	ownStore.sessions[ownSessionId].pageActions = [{ key: "highlight:own-1", type: "annotation", tabId: article.id, windowId: article.windowId, title: article.title, url: article.url, annotationId: "own-1", label: "Highlighted text", detail: "Alpha", citationText: "Alpha" }];
+	await globalThis.chrome.storage.local.set(storedStoreEntries(ownStore));
+	runtime = await configureSmokeRuntime(host);
+	await runtime.restoreSession(ownSessionId);
+	assert.equal((await call({ chat: style.chat, question: "Was he tired?" }, [mark("b3", "He yawned once.")])).cleared, 1);
+	delete globalThis.chrome.storage.session;
+	console.log("Connector marks: each conversation has a code, its own session and a clean page; a later question with the code joins hours later; links and Restore pages switch the page to their conversation");
+}
+
+// One question answered from two open tabs: the chat app marks each tab in
+// its own call, and history shows one turn with both pages.
+async function assertConnectorMarksAcrossTabsShareATurn() {
+	installChromeStorageStub();
+	const host = createReplayHost();
+	const runtime = await configureSmokeRuntime(host);
+	const first = replaySmokeTab({ id: 11, title: "The first article", url: "https://example.org/first" });
+	const second = replaySmokeTab({ id: 12, title: "The second article", url: "https://example.org/second" });
+	const mark = (tab, id, text, note) => ({
+		highlight: { tab, annotation: { annotationId: id, matchedText: text } },
+		note: note ? { tab, note: { annotationId: id, note, label: "Onhand" } } : null,
+	});
+	const question = "How do the two articles differ?";
+	const onFirst = await runtime.recordConnectorMarks({ client: "Claude", question, marks: [mark(first, "f1", "The first article says yes.", "The first view.")] });
+	const onSecond = await runtime.recordConnectorMarks({ client: "Claude", question, marks: [mark(second, "s1", "The second article says no."), mark(second, "s2", "It gives three reasons.")] });
+	assert.equal(onSecond.sessionId, onFirst.sessionId);
+	const saved = getStoredStore().sessions[onFirst.sessionId];
+	assert.equal(saved.turns.length, 1, "two calls for one question are one turn");
+	const [turn] = saved.turns;
+	assert.deepEqual(turn.pageActions.map((action) => `${action.key}@${action.tabId}`), ["highlight:f1@11", "note:f1@11", "highlight:s1@12", "highlight:s2@12"]);
+	// The panel's card groups the marks by page.
+	assert.equal(
+		turn.reply,
+		[
+			"Claude marked 1 passage on “The first article”:",
+			"",
+			"- The first view. [[cite:f1]]",
+			"",
+			"Claude marked 2 passages on “The second article”:",
+			"",
+			"- “The second article says no.” [[cite:s1]]",
+			"- “It gives three reasons.” [[cite:s2]]",
+		].join("\n"),
+	);
+	// Each mark's link goes to its own page (this host has neither tab open, so the page is opened by its address).
+	for (const [key, tab] of [[onFirst.actionKeys[0], first], [onSecond.actionKeys[1], second]]) {
+		const before = host.calls.length;
+		await runtime.activateAction(key, { sessionPath: onFirst.sessionId });
+		const went = host.calls.slice(before).filter((call) => call.name === "navigate" || call.name === "activate_tab");
+		assert.ok(
+			went.some((call) => call.args?.url === tab.url || call.args?.tabId === tab.id),
+			`the link for ${key} goes to ${tab.url}: ${JSON.stringify(went.map((call) => [call.name, call.args?.url, call.args?.tabId]))}`,
+		);
+	}
+	// A later question in the conversation, about either page, comes back to this session.
+	assert.equal(onSecond.chat, onFirst.chat);
+	const later = await runtime.recordConnectorMarks({ client: "Claude", chat: onFirst.chat, question: "And what about the second one?", marks: [mark(second, "s3", "Its last reason is cost.")] });
+	assert.equal(later.sessionId, onFirst.sessionId);
+	console.log("Connector marks: one question across two tabs is one turn, grouped by page, and each link goes to its own tab");
 }
 
 async function assertPreparationCanBeStoppedWithoutLateContinuation() {
@@ -14042,6 +14224,8 @@ async function main() {
 	await assertSuccessfulAnnotatedTurnAutoPersistsReviewSnapshot();
 	await assertReplayActionActivationCanTargetSavedSession();
 	await assertConnectorMarksBecomeAHistorySession();
+	await assertConnectorMarksStayWithTheirConversation();
+	await assertConnectorMarksAcrossTabsShareATurn();
 	await assertLocalFileCitationActivationReusesOpenFileTab();
 	await assertReplayActionActivationRepairsStaleAnnotationWithExactSource();
 	await assertRepeatedCitationRecoveryPreservesAnswerIds();
