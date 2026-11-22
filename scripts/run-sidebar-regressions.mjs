@@ -202,7 +202,11 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 			},
 			async sendMessage(message) {
 				runtimeMessages.push(message);
-				if (message?.type === "sidebar:fetch-state") return { ok: true, state };
+				if (message?.type === "sidebar:fetch-state") {
+					// A test can hold the first answer back, as a slow background does.
+					if (options.fetchStateGate) await options.fetchStateGate;
+					return { ok: true, state };
+				}
 				if (message?.type === "sidebar:live-responses" && options.liveResponses) return options.liveResponses(message);
 				if (message?.type === "sidebar:live-interruption-check" && options.liveInterruption) return options.liveInterruption(message);
 				if (message?.type === "sidebar:live-image" && options.liveImage) return options.liveImage(message);
@@ -2428,6 +2432,31 @@ async function assertFirstRunDiagnosticsIsOptIn() {
 	firefoxDom.window.close();
 }
 
+// Reported by the owner: every time the side panel was reopened it showed
+// the Free / ChatGPT / API key choices for a moment before the chat.
+async function assertSetupChoicesWaitForTheFirstState() {
+	for (const signedIn of [true, false]) {
+		const state = createState();
+		state.preferences.hasOAuthCredentials = signedIn;
+		const gate = createDeferred();
+		const dom = await renderSidebar(state, [], { fetchStateGate: gate.promise });
+		const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+		const panel = shadow.getElementById("authPanel");
+		// The panel has opened and drawn itself, and its state has not arrived.
+		await waitForSidebarTick(dom);
+		await waitForSidebarTick(dom);
+		assert.equal(panel.hidden, true, `no setup choices before the first state (signed in: ${signedIn})`);
+		assert.equal(panel.textContent, "");
+		gate.resolve();
+		await dom.window.__onhandSidebarTestHooks.requestState();
+		await waitForSidebarTick(dom);
+		// Someone who has not set Onhand up still gets the choices once that is known.
+		assert.equal(panel.hidden, signedIn, `after the first state (signed in: ${signedIn})`);
+		if (!signedIn) assert.match(panel.textContent, /Try Onhand free/);
+		dom.window.close();
+	}
+}
+
 async function assertExpiredSignInOffersSignInAgain() {
 	// The runtime drops a ChatGPT sign-in whose refresh token was rejected and
 	// fails the turn with "sign-in expired". The panel asks to sign in again,
@@ -3543,6 +3572,7 @@ await assertRealtimeVoiceDisabledState();
 await assertPromptBeforeFirstRunChoiceWaits();
 await assertFreeTierSetupIgnoresRepeatClicks();
 await assertFirstRunDiagnosticsIsOptIn();
+await assertSetupChoicesWaitForTheFirstState();
 await assertExpiredSignInOffersSignInAgain();
 await assertEmptyCitationMarkerIsNotShown();
 await assertLookAlikeCitationMarkersAreNotShown();
