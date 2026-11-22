@@ -74,24 +74,34 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			}
 		`;
 	};
-	const NOTE_TOKEN_PREFIX = "@@ONHAND_NOTE_TOKEN_";
+	// Code and math are rendered first and stand in the text as markers until
+	// the rest is escaped. The markers are private-use characters that are
+	// stripped from the note before anything else, and each is swapped back
+	// once, without rescanning what was swapped in. A note can therefore never
+	// name a marker and have a rendered piece put where it chooses (inside an
+	// attribute KaTeX wrote, for one).
+	const NOTE_TOKEN_OPEN = "\uE000";
+	const NOTE_TOKEN_CLOSE = "\uE001";
+	const NOTE_TOKEN_MARKERS = /[\uE000\uE001]/g;
+	const NOTE_TOKEN_PATTERN = /\uE000(\d+)\uE001/g;
 	let noteKatexModule = null;
 	let noteKatexLoadPromise = null;
 
 	const createNoteTokenStore = () => {
 		const tokens = [];
 		return {
-			replace(html) {
-				const token = `${NOTE_TOKEN_PREFIX}${tokens.length}@@`;
-				tokens.push(html);
+			replace(html, source = "") {
+				const token = `${NOTE_TOKEN_OPEN}${tokens.length}${NOTE_TOKEN_CLOSE}`;
+				tokens.push({ html, source });
 				return token;
 			},
+			// Math that wraps an earlier piece (a code span inside a formula) is
+			// rendered from the text as written, not from the marker.
+			source(text) {
+				return String(text || "").replace(NOTE_TOKEN_PATTERN, (_match, index) => tokens[Number(index)]?.source ?? "");
+			},
 			restore(text) {
-				let restored = String(text || "");
-				for (let index = 0; index < tokens.length; index += 1) {
-					restored = restored.split(`${NOTE_TOKEN_PREFIX}${index}@@`).join(tokens[index]);
-				}
-				return restored;
+				return String(text || "").replace(NOTE_TOKEN_PATTERN, (_match, index) => tokens[Number(index)]?.html ?? "");
 			},
 		};
 	};
@@ -119,14 +129,15 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 
 	const renderNoteRichText = (text) => {
 		const store = createNoteTokenStore();
-		let working = String(text || "").replace(/\r\n?/g, "\n");
-		working = working.replace(/`([^`]+)`/g, (_match, code) =>
-			store.replace(`<code data-onhand-note-part="code">${escapeHtml(code)}</code>`),
+		let working = String(text || "").replace(NOTE_TOKEN_MARKERS, "").replace(/\r\n?/g, "\n");
+		working = working.replace(/`([^`]+)`/g, (match, code) =>
+			store.replace(`<code data-onhand-note-part="code">${escapeHtml(code)}</code>`, match),
 		);
-		working = working.replace(/\\\[([\s\S]+?)\\\]/g, (_match, math) => store.replace(renderNoteMathExpression(math, true)));
-		working = working.replace(/\$\$([\s\S]+?)\$\$/g, (_match, math) => store.replace(renderNoteMathExpression(math, true)));
-		working = working.replace(/\\\(([\s\S]+?)\\\)/g, (_match, math) => store.replace(renderNoteMathExpression(math, false)));
-		working = working.replace(/\$(?!\$)([^$\n]+?)\$/g, (_match, math) => store.replace(renderNoteMathExpression(math, false)));
+		const math = (displayMode) => (match, source) => store.replace(renderNoteMathExpression(store.source(source), displayMode), store.source(match));
+		working = working.replace(/\\\[([\s\S]+?)\\\]/g, math(true));
+		working = working.replace(/\$\$([\s\S]+?)\$\$/g, math(true));
+		working = working.replace(/\\\(([\s\S]+?)\\\)/g, math(false));
+		working = working.replace(/\$(?!\$)([^$\n]+?)\$/g, math(false));
 		let html = escapeHtml(working);
 		html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
 		html = html.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
@@ -925,6 +936,32 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			[data-onhand-note-part="body"] em {
 			  font-style: italic !important;
 			  color: var(--onhand-text) !important;
+			}
+
+			/* A framed note: Onhand's own frame draws the title and text, so the
+			   page's scripts cannot read them. The card around it stays here. */
+			iframe[data-onhand-note-part="body"] {
+			  display: block !important;
+			  border: 0 !important;
+			  margin: 0 !important;
+			  padding: 0 !important;
+			  min-width: 0 !important;
+			  max-width: 100% !important;
+			  overflow: hidden !important;
+			  background: transparent !important;
+			}
+
+			[data-onhand-note-kind="card"][data-onhand-pdf-note] iframe[data-onhand-note-part="body"] {
+			  width: 100% !important;
+			}
+
+			/* The collapse button sits over the frame's title line. */
+			[data-onhand-note-kind="card"][data-onhand-note-framed="true"]:not([data-onhand-note-collapsed="true"]) [data-onhand-note-part="header"] {
+			  position: absolute !important;
+			  top: 12px !important;
+			  right: 14px !important;
+			  margin: 0 !important;
+			  z-index: 1 !important;
 			}
 
 			[data-onhand-note-part="code"] {
@@ -1850,8 +1887,131 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		return text;
 	};
 
+	// A note's title line and its text, as elements. Shared by a note drawn in
+	// the page and one drawn inside Onhand's own note frame.
+	const buildNoteParts = async (rawNoteText, labelValue) => {
+		const label = document.createElement("div");
+		label.setAttribute("data-onhand-note-part", "label");
+		const labelText = applyNoteLabel(label, labelValue);
+		const body = document.createElement("div");
+		body.setAttribute("data-onhand-note-part", "body");
+		body.setAttribute("data-onhand-note-source", rawNoteText);
+		if (noteMayContainMath(rawNoteText)) {
+			await ensureNoteKatexLoaded();
+		}
+		body.innerHTML = renderNoteRichText(rawNoteText);
+		body.setAttribute("data-onhand-note-renderer", noteKatexModule ? "katex" : "plain");
+		return { label, body, labelText };
+	};
+
+	// A framed note keeps its title and text out of the page. The page gets an
+	// empty card holding a frame from Onhand's own origin; the frame collects
+	// the note from the extension under a random name and draws it, and a
+	// page's scripts cannot read into a frame from another origin. A note in
+	// the page's own DOM (or in a shadow root, which window.find still
+	// searches) can be read by that page. Framing is for notes that may quote
+	// another tab, such as ones an outside app writes through the connector.
+	const NOTE_FRAME_NAME_PATTERN = /^[0-9a-f]{64}$/;
+	const NOTE_FRAME_URL_PATTERN = /^((?:chrome|moz)-extension:\/\/[^/?#]+)\/note-frame\.html$/;
+	const normalizeNoteFrame = (frame) => {
+		if (frame == null) return null;
+		const url = String(frame.url || "");
+		const name = String(frame.token || "");
+		if (!NOTE_FRAME_NAME_PATTERN.test(name) || !NOTE_FRAME_URL_PATTERN.test(url)) {
+			throw new Error("showNote was given a note frame it cannot use");
+		}
+		const waitMs = Number(frame.waitMs);
+		return { url, token: name, waitMs: Number.isFinite(waitMs) && waitMs >= 0 ? Math.min(waitMs, 3000) : 1200 };
+	};
+
+	const createNoteFrameElement = (frame, layout = "fit") => {
+		const element = document.createElement("iframe");
+		element.setAttribute("data-onhand-note-part", "body");
+		element.setAttribute("data-onhand-note-frame", frame.token);
+		element.setAttribute("title", "Onhand note");
+		element.setAttribute("scrolling", "no");
+		// Laid out at the card's full width first, so the first height the frame
+		// reports is already the final one: a hidden tab sends no resize events
+		// to correct it later.
+		if (layout === "fit") element.style.setProperty("width", "32rem");
+		element.style.setProperty("height", "0");
+		const theme = annotationTheme === "system" ? (window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light") : annotationTheme;
+		element.src = `${frame.url}?theme=${theme}&layout=${layout === "fill" ? "fill" : "fit"}#${frame.token}`;
+		return element;
+	};
+
+	// The one thing a note frame tells the page is how big its note is.
+	const applyNoteFrameSize = (frameElement, size) => {
+		const width = Math.ceil(Number(size?.width));
+		const height = Math.ceil(Number(size?.height));
+		if (!(width > 0 && width <= 4000 && height > 0 && height <= 20000)) return false;
+		const note = frameElement.closest('[data-onhand-note-kind="card"]');
+		const isPdfNote = Boolean(note?.hasAttribute("data-onhand-pdf-note"));
+		if (!isPdfNote) frameElement.style.setProperty("width", `${width}px`, "important");
+		frameElement.style.setProperty("height", `${height}px`, "important");
+		if (isPdfNote) schedulePdfOverlayPositionSync();
+		return true;
+	};
+
+	const noteFrameWaiters = () => {
+		if (!window.__onhandNoteFrameWaiters) window.__onhandNoteFrameWaiters = new Map();
+		return window.__onhandNoteFrameWaiters;
+	};
+
+	const ensureNoteFrameSizer = (frame) => {
+		if (window.__onhandNoteFrameSizerInstalled) return;
+		window.__onhandNoteFrameSizerInstalled = true;
+		const frameOrigin = frame.url.match(NOTE_FRAME_URL_PATTERN)[1];
+		// When the column a note sits in changes width (the side panel opens),
+		// ask its frame to measure again. A frame that is off screen gets no
+		// resize callbacks of its own, and would keep a stale height until it
+		// is scrolled into view.
+		if (typeof ResizeObserver === "function") {
+			window.__onhandNoteFrameWidthObserver = new ResizeObserver((entries) => {
+				for (const entry of entries) {
+					try {
+						entry.target.contentWindow?.postMessage({ type: "onhand-note-frame-measure" }, frameOrigin);
+					} catch {}
+				}
+			});
+		}
+		window.addEventListener("message", (event) => {
+			const data = event.data;
+			// Only Onhand's own frame is believed; the page's scripts post from
+			// the page's origin.
+			if (event.origin !== frameOrigin || !data || data.type !== "onhand-note-frame-size") return;
+			const name = String(data.token || "");
+			if (!NOTE_FRAME_NAME_PATTERN.test(name)) return;
+			const frameElement = document.querySelector(`iframe[data-onhand-note-frame="${name}"]`);
+			if (!(frameElement instanceof HTMLIFrameElement) || !applyNoteFrameSize(frameElement, data)) return;
+			const waiter = noteFrameWaiters().get(name);
+			if (waiter) waiter(true);
+		});
+	};
+
+	// Resolves true once the frame has drawn its note and reported a size, or
+	// false if it has not within the wait (the card then stays empty; the text
+	// is never drawn in the page instead).
+	const waitForNoteFrame = (frame) =>
+		new Promise((resolve) => {
+			const waiters = noteFrameWaiters();
+			const finish = (ready) => {
+				window.clearTimeout(timeoutId);
+				waiters.delete(frame.token);
+				resolve(ready);
+			};
+			const timeoutId = window.setTimeout(() => finish(false), frame.waitMs);
+			waiters.set(frame.token, finish);
+		});
+
+	const watchNoteFrameWidth = (note) => {
+		const frameElement = note.querySelector("iframe[data-onhand-note-frame]");
+		if (frameElement) window.__onhandNoteFrameWidthObserver?.observe(frameElement);
+	};
+
 	const createPdfNoteElement = (annotationId, noteText, options = {}) => {
 		const noteId = String(options.noteId || nextAnnotationId());
+		const frame = options.frame || null;
 		const note = document.createElement("div");
 		note.setAttribute("data-onhand-note-kind", "card");
 		note.setAttribute("data-onhand-pdf-note", "true");
@@ -1862,14 +2022,23 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		const header = document.createElement("div");
 		header.setAttribute("data-onhand-note-part", "header");
 
-		const label = document.createElement("span");
-		label.setAttribute("data-onhand-note-part", "label");
-		applyNoteLabel(label, options.label);
-
 		const toggle = document.createElement("button");
 		toggle.type = "button";
 		toggle.setAttribute("data-onhand-note-toggle", "true");
 		toggle.textContent = "x";
+
+		if (frame) {
+			// The frame draws the title and the text; the page keeps the button.
+			note.setAttribute("data-onhand-note-framed", "true");
+			header.append(toggle);
+			note.append(header, createNoteFrameElement(frame, "fill"));
+			setPdfNoteCollapsed(note, false);
+			return note;
+		}
+
+		const label = document.createElement("span");
+		label.setAttribute("data-onhand-note-part", "label");
+		applyNoteLabel(label, options.label);
 
 		const body = document.createElement("div");
 		body.setAttribute("data-onhand-note-part", "body");
@@ -2097,16 +2266,18 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 				annotationElement = restored?.highlight || null;
 				if (annotationElement) highlights += 1;
 			}
-			if (!(annotationElement instanceof HTMLElement) || !record.note?.text) continue;
+			if (!(annotationElement instanceof HTMLElement) || !(record.note?.text || record.note?.frame)) continue;
 			if (findNoteForAnnotation(annotationId)) continue;
 			const overlayLayer = ensurePdfOverlayLayer(page);
 			if (!overlayLayer) continue;
 			const note = createPdfNoteElement(annotationId, record.note.text, {
 				noteId: record.note.noteId,
 				label: record.note.label || "Onhand",
+				frame: record.note.frame,
 			});
 			overlayLayer.appendChild(note);
 			positionPdfNoteElement(note, annotationElement, page);
+			if (record.note.frame) watchNoteFrameWidth(note);
 			notes += 1;
 		}
 		if (notes > 0) schedulePdfOverlayPositionSync();
@@ -5478,13 +5649,15 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		const overlayLayer = ensurePdfOverlayLayer(page);
 		if (!overlayLayer) throw new Error(`PDF overlay layer not found for id: ${annotationId}`);
 		const replacedCount = removeNotesForAnnotation(annotationId);
-		const labelText = String(options.label || "").replace(/\s+/g, " ").trim() || NOTE_DEFAULT_LABEL;
-		if (noteMayContainMath(noteText)) {
+		const frame = options.frame || null;
+		const labelText = frame ? "" : String(options.label || "").replace(/\s+/g, " ").trim() || NOTE_DEFAULT_LABEL;
+		if (!frame && noteMayContainMath(noteText)) {
 			await ensureNoteKatexLoaded();
 		}
-		const note = createPdfNoteElement(annotationId, noteText, { label: labelText });
+		const note = createPdfNoteElement(annotationId, noteText, { label: labelText, frame });
 		const noteId = String(note.getAttribute("data-onhand-note-id") || "");
 
+		const frameReady = frame ? waitForNoteFrame(frame) : null;
 		overlayLayer.appendChild(note);
 		positionPdfNoteElement(note, annotationElement, page);
 		const pdfAnchor = parsePdfAnchorFromElement(annotationElement);
@@ -5495,8 +5668,13 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 				noteId,
 				label: labelText,
 				text: noteText,
+				...(frame ? { frame } : {}),
 			},
 		});
+		const frameLoaded = frame ? await frameReady : null;
+		// The frame has now reported its height; place the card with it.
+		if (frameLoaded) positionPdfNoteElement(note, annotationElement, page);
+		if (frame) watchNoteFrameWidth(note);
 
 		const scrolled = options.scrollIntoView === false ? null : await scrollToAnnotation(annotationId, { block: options.block, target: "note" });
 		if (!scrolled) await waitForLayout();
@@ -5514,20 +5692,25 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			replacedCount,
 			pdfAnchor,
 			scrolled,
+			...(frame ? { framed: true, frameLoaded } : {}),
 		};
 	};
 
 	const showNote = async (annotationId, noteText, options = {}) => {
 		const rawAnnotationId = String(annotationId ?? "").trim();
-		const rawNoteText = String(noteText ?? "").trim();
+		const frame = normalizeNoteFrame(options.frame);
+		// A framed note's title and text never come to the page: the frame
+		// collects them from the extension.
+		const rawNoteText = frame ? "" : String(noteText ?? "").trim();
 		if (!rawAnnotationId) throw new Error("showNote requires a non-empty annotationId");
-		if (!rawNoteText) throw new Error("showNote requires non-empty note text");
+		if (!frame && !rawNoteText) throw new Error("showNote requires non-empty note text");
 
 		ensureAnnotationStyles();
 		syncPdfOverlayPositions();
+		if (frame) ensureNoteFrameSizer(frame);
 		const annotationElement = findAnnotationElement(rawAnnotationId);
 		if (annotationElement.getAttribute("data-onhand-highlight-kind") === "pdf") {
-			return await showPdfNote(annotationElement, rawAnnotationId, rawNoteText, options);
+			return await showPdfNote(annotationElement, rawAnnotationId, rawNoteText, { ...options, frame });
 		}
 		const container = findAnnotationContainer(annotationElement);
 		const insertionPlacement = findNoteInsertionPlacement(container);
@@ -5539,22 +5722,23 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		note.setAttribute("data-onhand-note-for", rawAnnotationId);
 		applyAnnotationThemeToElement(note);
 
-		const label = document.createElement("div");
-		label.setAttribute("data-onhand-note-part", "label");
-		const labelText = applyNoteLabel(label, options.label);
-
-		const body = document.createElement("div");
-		body.setAttribute("data-onhand-note-part", "body");
-		body.setAttribute("data-onhand-note-source", rawNoteText);
-		if (noteMayContainMath(rawNoteText)) {
-			await ensureNoteKatexLoaded();
+		let labelText = "";
+		let frameLoaded = null;
+		if (frame) {
+			note.setAttribute("data-onhand-note-framed", "true");
+			note.append(createNoteFrameElement(frame));
+			const frameReady = waitForNoteFrame(frame);
+			insertNoteAtPlacement(note, insertionPlacement);
+			note.style.boxSizing = "border-box";
+			frameLoaded = await frameReady;
+			watchNoteFrameWidth(note);
+		} else {
+			const parts = await buildNoteParts(rawNoteText, options.label);
+			labelText = parts.labelText;
+			note.append(parts.label, parts.body);
+			insertNoteAtPlacement(note, insertionPlacement);
+			note.style.boxSizing = "border-box";
 		}
-		body.innerHTML = renderNoteRichText(rawNoteText);
-		body.setAttribute("data-onhand-note-renderer", noteKatexModule ? "katex" : "plain");
-
-		note.append(label, body);
-		insertNoteAtPlacement(note, insertionPlacement);
-		note.style.boxSizing = "border-box";
 		const scrolled = options.scrollIntoView === false ? null : await scrollToAnnotation(rawAnnotationId, { block: options.block, target: "note" });
 		if (!scrolled) {
 			await waitForLayout();
@@ -5572,7 +5756,22 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			scrollY: window.scrollY,
 			replacedCount,
 			scrolled,
+			...(frame ? { framed: true, frameLoaded } : {}),
 		};
+	};
+
+	// Draws a note's title and text as the whole content of Onhand's own note
+	// frame (note-frame.html). Called by that page, never in a web page.
+	const drawNoteInFrame = async (noteText, options = {}) => {
+		ensureAnnotationStyles();
+		const content = document.createElement("div");
+		content.setAttribute("data-onhand-note-kind", "card");
+		content.setAttribute("data-onhand-note-frame-content", options.layout === "fill" ? "fill" : "fit");
+		applyAnnotationThemeToElement(content);
+		const parts = await buildNoteParts(String(noteText ?? "").trim(), options.label);
+		content.append(parts.label, parts.body);
+		document.body.replaceChildren(content);
+		return content;
 	};
 
 	const capturePrimaryScrollContainer = () => {
@@ -5645,6 +5844,9 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 				const note = annotationId ? findNoteForAnnotation(annotationId) : null;
 				const label = note?.querySelector?.('[data-onhand-note-part="label"]');
 				const body = note?.querySelector?.('[data-onhand-note-part="body"]');
+				// A framed note's words are not in this page; whoever asked fills
+				// them in from the extension's side by the frame's name.
+				const frameToken = body?.getAttribute?.("data-onhand-note-frame") || null;
 				let pdfAnchor = null;
 				try {
 					pdfAnchor = JSON.parse(annotationElement.getAttribute("data-onhand-pdf-anchor") || "null");
@@ -5663,8 +5865,9 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 						? {
 							noteId: note.getAttribute("data-onhand-note-id") || null,
 							label: normalizeText(label?.textContent || "") || null,
-							text: normalizeText(body?.getAttribute?.("data-onhand-note-source") || body?.textContent || note.textContent || "").slice(0, 1000),
+							text: frameToken ? "" : normalizeText(body?.getAttribute?.("data-onhand-note-source") || body?.textContent || note.textContent || "").slice(0, 1000),
 							rect: rectToObject(note.getBoundingClientRect()),
+							...(frameToken ? { frameToken } : {}),
 						}
 						: null,
 				};
@@ -5690,6 +5893,7 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 						label: record.note.label || null,
 						text: normalizeText(record.note.text || "").slice(0, 1000),
 						rect: null,
+						...(record.note.frame ? { frameToken: record.note.frame.token } : {}),
 					}
 					: null,
 				virtualized: true,
@@ -5830,6 +6034,7 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		getScrollState,
 		scrollToAnnotation,
 		showNote,
+		drawNoteInFrame,
 		captureState,
 		clearAnnotations,
 		removeAnnotations,

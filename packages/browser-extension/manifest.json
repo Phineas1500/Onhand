@@ -79,6 +79,7 @@
 				"pdf-viewer.html",
 				"pdf-viewer.bundle.js",
 				"page-error-reporter.js",
+				"note-frame.html",
 				"vendor/*",
 				"vendor/cmaps/*",
 				"vendor/standard_fonts/*",

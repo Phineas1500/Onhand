@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<!-- This page draws note text that may come from an outside app. It can
+		     load nothing from the network and run no script but Onhand's own. -->
+		<meta
+			http-equiv="Content-Security-Policy"
+			content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; base-uri 'none'; form-action 'none'"
+		/>
+		<title>Onhand note</title>
+		<link rel="stylesheet" href="note-frame.css" />
+	</head>
+	<body>
+		<script src="page-toolkit-content.js"></script>
+		<script src="note-frame.js"></script>
+	</body>
+</html>

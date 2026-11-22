@@ -157,6 +157,7 @@
 	let currentWindowId = null;
 	let sessionOverview = null;
 	let sessionLoading = false;
+	let lastSessionListRevision = null;
 	let sessionSwitching = false;
 	let pendingSessionPath = "";
 	let creatingSession = false;
@@ -4327,7 +4328,7 @@
 		}
 	}
 
-	async function createNewSession() {
+	async function createNewSession({ keepPageMarks = false } = {}) {
 		assertSidebarConnected();
 		if (isFreshCurrentSession(currentState)) return;
 		invalidateSidebarSessionSnapshot();
@@ -4340,6 +4341,7 @@
 			const response = await chrome.runtime.sendMessage({
 				type: "sidebar:new-session",
 				windowId: await ensureCurrentWindowId(),
+				...(keepPageMarks ? { keepPageMarks: true } : {}),
 			});
 			if (!response?.ok) {
 				throw new Error(response?.error || "Could not create a new session.");
@@ -6035,14 +6037,17 @@
 		const sourceActions = getTurnSourceActions(turn);
 		const supportMarkup = renderProgressDetails(turn);
 		const isVoiceTurn = /^\[Voice\]/i.test(String(turn?.userPrompt || "")) || /^realtime_|^socratic_/i.test(String(turn?.kind || ""));
+		// Marks another app (Claude, ChatGPT) made through the connector: the
+		// turn lists them, and that app wrote the notes.
+		const fromChatApp = typeof turn?.connectorOrigin === "string";
 		return `
 			<article class="onhand-entry ${turn?.error ? "error" : ""}" data-onhand-turn-id="${escapeAttribute(String(turn?.id || ""))}">
 				<div class="onhand-eyebrow">
 					<time>${escapeHtml(formatEntryTime(turn?.createdAt))}</time>
 					<span class="dot"></span>
-					<span>Onhand</span>
+					<span>${fromChatApp ? escapeHtml(turn.connectorOrigin || "A chat app") : "Onhand"}</span>
 					${turn?.voiceOrigin === "live" ? '<span class="dot"></span><span>Voice answer</span>' : ""}
-					${Array.isArray(turn?.pageActions) && turn.pageActions.length ? '<span class="dot"></span><span>Page-grounded</span>' : ""}
+					${fromChatApp ? '<span class="dot"></span><span>Marked from a chat</span>' : Array.isArray(turn?.pageActions) && turn.pageActions.length ? '<span class="dot"></span><span>Page-grounded</span>' : ""}
 				</div>
 				${turn?.userPrompt ? `<p class="onhand-q">${escapeHtml(turn.userPrompt)}</p>` : ""}
 				<div class="onhand-a ${turn?.pending ? "pending" : ""}">
@@ -7059,6 +7064,14 @@
 		}
 		sidebarConnectionError = "";
 		lastAcceptedSidebarState = response.state;
+		// A session can appear without this panel asking for one (a chat app's
+		// marks are kept as one): list sessions again when the runtime says so.
+		const listRevision = response.state?.sessionListRevision;
+		if (typeof listRevision === "number" && listRevision !== lastSessionListRevision) {
+			const firstLook = lastSessionListRevision === null;
+			lastSessionListRevision = listRevision;
+			if (!firstLook) void requestSessions().catch(() => {});
+		}
 		sidebarHistory = typeof response.historyRevision === "string" && response.historyRevision
 			? {
 				revision: response.historyRevision,
@@ -7898,6 +7911,16 @@
 		realtimeConnecting = true; realtimeError = "";
 		trackFeature("voice_started");
 		setRealtimeStatus("Connecting GPT-Live...");
+		// A session that records another app's highlights stays a record: a
+		// call started while one is open gets a session of its own.
+		if (currentState?.currentSession?.connectorClient) {
+			try {
+				await createNewSession({ keepPageMarks: true });
+			} catch (error) {
+				realtimeConnecting = false;
+				throw error;
+			}
+		}
 		const sessionPath = getStateSessionPath(currentState);
 		await loadLiveTranscript(sessionPath);
 		liveTranscriptStorageKey = `onhandLiveTranscript:${sessionPath}`;

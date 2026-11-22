@@ -1942,7 +1942,19 @@ const NOTE_DEFAULT_LABEL = "Onhand";
 
 async function pdfShowNote(annotationId: string, noteText: string, options: Record<string, any> = {}) {
 	const rawAnnotationId = String(annotationId || "").trim();
-	const rawNoteText = String(noteText || "").trim();
+	let rawNoteText = String(noteText || "").trim();
+	let labelValue = String(options.label || "");
+	// A framed note (one that may quote another tab) arrives as a name: its
+	// title and text wait in the extension's session storage so they never pass
+	// through a web page. This viewer is Onhand's own page, which no web page
+	// can read, so it collects them and draws the note itself.
+	const frameName = String(options.frame?.token || "");
+	if (!rawNoteText && /^[0-9a-f]{64}$/.test(frameName)) {
+		const key = `onhandNoteFrame:${frameName}`;
+		const record = (await chrome.storage.session.get(key))?.[key];
+		rawNoteText = String(record?.text || "").trim();
+		labelValue = String(record?.label || "");
+	}
 	if (!rawAnnotationId) throw new Error("showNote requires a non-empty annotationId");
 	if (!rawNoteText) throw new Error("showNote requires non-empty note text");
 	const annotation = findAnnotation(rawAnnotationId);
@@ -1964,7 +1976,7 @@ async function pdfShowNote(annotationId: string, noteText: string, options: Reco
 	// The line above the note: its own title when it has one, else "Onhand".
 	// A title keeps its casing (pH, mRNA, x); only the plain header is set in
 	// capitals.
-	const labelText = normalizeText(String(options.label || "")) || NOTE_DEFAULT_LABEL;
+	const labelText = normalizeText(labelValue) || NOTE_DEFAULT_LABEL;
 	const titled = labelText !== NOTE_DEFAULT_LABEL;
 	label.textContent = labelText;
 	if (titled) label.setAttribute("data-onhand-note-titled", "true");

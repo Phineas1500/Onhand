@@ -1,0 +1,33 @@
+/* Onhand's note frame: one note's title and text, nothing else. The card
+   around it (border, padding, shadow) is drawn by the page that holds the
+   frame; here the same card rules apply with that chrome taken off. */
+html,
+body {
+	margin: 0;
+	padding: 0;
+	overflow: hidden;
+}
+
+/* "html body" lifts these over the toolkit's own card rules, which are added
+   to the page later and would otherwise win on equal terms. */
+html body [data-onhand-note-kind="card"][data-onhand-note-frame-content] {
+	margin: 0 !important;
+	padding: 0 !important;
+	border: 0 !important;
+	border-radius: 0 !important;
+	box-shadow: none !important;
+	max-width: 100% !important;
+	max-inline-size: 100% !important;
+}
+
+/* In a PDF-style card the frame is as wide as the card, and the title line
+   leaves room for the card's collapse button, which sits over it. */
+html body [data-onhand-note-kind="card"][data-onhand-note-frame-content="fill"] {
+	width: 100% !important;
+	inline-size: 100% !important;
+}
+
+html body [data-onhand-note-frame-content="fill"] [data-onhand-note-part="label"] {
+	min-height: 22px !important;
+	padding-right: 30px !important;
+}

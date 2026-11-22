@@ -26622,7 +26622,15 @@ function attachPdfNoteInteractions(note, annotation) {
 var NOTE_DEFAULT_LABEL = "Onhand";
 async function pdfShowNote(annotationId, noteText, options = {}) {
   const rawAnnotationId = String(annotationId || "").trim();
-  const rawNoteText = String(noteText || "").trim();
+  let rawNoteText = String(noteText || "").trim();
+  let labelValue = String(options.label || "");
+  const frameName = String(options.frame?.token || "");
+  if (!rawNoteText && /^[0-9a-f]{64}$/.test(frameName)) {
+    const key = `onhandNoteFrame:${frameName}`;
+    const record = (await chrome.storage.session.get(key))?.[key];
+    rawNoteText = String(record?.text || "").trim();
+    labelValue = String(record?.label || "");
+  }
   if (!rawAnnotationId) throw new Error("showNote requires a non-empty annotationId");
   if (!rawNoteText) throw new Error("showNote requires non-empty note text");
   const annotation = findAnnotation(rawAnnotationId);
@@ -26641,7 +26649,7 @@ async function pdfShowNote(annotationId, noteText, options = {}) {
   header.setAttribute("data-onhand-note-part", "header");
   const label = document.createElement("span");
   label.setAttribute("data-onhand-note-part", "label");
-  const labelText = normalizeText(String(options.label || "")) || NOTE_DEFAULT_LABEL;
+  const labelText = normalizeText(labelValue) || NOTE_DEFAULT_LABEL;
   const titled = labelText !== NOTE_DEFAULT_LABEL;
   label.textContent = labelText;
   if (titled) label.setAttribute("data-onhand-note-titled", "true");

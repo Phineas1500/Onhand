@@ -86,6 +86,11 @@ interface RuntimeSession {
 	artifactIds: string[];
 	learnerState: LearnerState;
 	liveTranscriptRevisions?: Record<string, number>;
+	// Set on a session that records what a chat app (Claude, ChatGPT) marked
+	// through the connector. Its notes were written by that app, so such a
+	// session is a record only: nothing in it goes into Onhand's own model
+	// context, and a question asked while it is open starts a new session.
+	connector?: { client: string; titled?: boolean };
 }
 
 interface RuntimeSettings {
@@ -164,6 +169,9 @@ interface UiTurn {
 	interrupted?: boolean;
 	voiceOrigin?: "live";
 	liveVoiceSessionId?: string;
+	// The chat app that made this turn's marks through the connector ("Claude").
+	// Present (possibly as the generic "A chat app") only on such turns.
+	connectorOrigin?: string;
 	userPrompt: string;
 	reply: string;
 	activities: UiActivity[];
@@ -299,6 +307,10 @@ interface PageAction {
 	citationText?: string;
 	// A note's own title (the line above it on the page), when it has one.
 	noteLabel?: string;
+	// A note written by a chat app through the connector. When it is put back
+	// on a page it is drawn in Onhand's own frame, where the page's scripts
+	// cannot read it (the app may have quoted another tab in it).
+	framed?: boolean;
 	pdfAnchor?: any;
 	anchor?: any;
 }
@@ -415,6 +427,7 @@ interface ReplayAnnotation {
 	matchedText: string;
 	noteText?: string;
 	noteLabel?: string;
+	noteFramed?: boolean;
 	pdfAnchor?: any;
 	anchor?: any;
 }
@@ -4022,13 +4035,13 @@ function mergeReplayTarget(target: ReplayAnnotation, action: PageAction) {
 
 function buildReplayAnnotationsFromPageActions(pageActions: PageAction[] = []): ReplayAnnotation[] {
 	const annotations = new Map<string, ReplayAnnotation>();
-	const notes = new Map<string, { action: PageAction; text: string; label: string }>();
+	const notes = new Map<string, { action: PageAction; text: string; label: string; framed: boolean }>();
 	for (const action of pageActions) {
 		if (!action || typeof action !== "object") continue;
 		if (action.type === "note") {
 			const noteText = compactActionText(action.citationText || action.detail);
 			if (!noteText) continue;
-			notes.set(replayActionKey(action), { action, text: noteText, label: storedOnPageNoteTitle(action.noteLabel) });
+			notes.set(replayActionKey(action), { action, text: noteText, label: storedOnPageNoteTitle(action.noteLabel), framed: action.framed === true });
 			continue;
 		}
 		const isHighlight = action.type === "annotation" && (String(action.key || "").startsWith("highlight:") || action.label === "Highlighted text");
@@ -4062,6 +4075,7 @@ function buildReplayAnnotationsFromPageActions(pageActions: PageAction[] = []): 
 		if (!annotation) continue;
 		annotation.noteText = note.text;
 		if (note.label) annotation.noteLabel = note.label;
+		if (note.framed) annotation.noteFramed = true;
 		mergeReplayTarget(annotation, note.action);
 	}
 	return Array.from(annotations.values());
@@ -4147,6 +4161,7 @@ function buildSessionNotesMarkdown(session: RuntimeSession, exportedAt: Date = n
 }
 
 function buildExistingAnchorContext(session: RuntimeSession, maxAnchors = 8) {
+	if (session.connector) return "";
 	const annotations = buildReplayAnnotationsFromPageActions(collectSessionPageActions(session));
 	if (!annotations.length) return "";
 	const lines = annotations.slice(-maxAnchors).map((annotation, index) => {
@@ -4407,11 +4422,41 @@ function createEmptyState(session: RuntimeSession | null, settings: RuntimeSetti
 	};
 }
 
+const CONNECTOR_GENERIC_CLIENT = "A chat app";
+
+// What the side panel shows for a turn of marks a chat app made: one line per
+// mark, each ending in the marker the panel turns into a chip that jumps to
+// it. Rebuilt from the turn's page actions whenever marks are added.
+function buildConnectorTurnReply(client: string, actions: PageAction[]) {
+	const pages = new Map<string, { title: string; lines: string[] }>();
+	for (const highlight of actions.filter((action) => action?.type === "annotation" && String(action.key || "").startsWith("highlight:"))) {
+		const annotationId = compactActionText(highlight.annotationId);
+		if (!annotationId) continue;
+		const note = actions.find((action) => action?.type === "note" && compactActionText(action.annotationId) === annotationId);
+		const noteText = note ? compactActionText(note.citationText || note.detail) : "";
+		// The heading is another program's text: keep it from opening markup.
+		const heading = note ? storedOnPageNoteTitle(note.noteLabel).replace(/[*_`[\]<>]/g, "").trim() : "";
+		const body = noteText
+			? `${heading ? `**${heading}.** ` : ""}${noteText}`
+			: `“${truncate(compactActionText(highlight.citationText || highlight.detail), 160)}”`;
+		const pageKey = compactActionText(highlight.url) || compactActionText(highlight.title) || "page";
+		const page = pages.get(pageKey) || { title: compactActionText(highlight.title) || compactActionText(highlight.url) || "the page", lines: [] };
+		page.lines.push(`- ${body} [[cite:${annotationId}]]`);
+		pages.set(pageKey, page);
+	}
+	return Array.from(pages.values())
+		.map((page) => `${client} marked ${page.lines.length} passage${page.lines.length === 1 ? "" : "s"} on “${truncate(page.title, 90)}”:\n\n${page.lines.join("\n")}`)
+		.join("\n\n");
+}
+
 function buildSessionState(session: RuntimeSession) {
 	return {
 		sessionId: session.id,
 		sessionFile: session.id,
 		sessionName: session.name,
+		// Set when the session records a chat app's marks, not a conversation
+		// with Onhand.
+		...(session.connector ? { connectorClient: session.connector.client } : {}),
 	};
 }
 
@@ -4443,6 +4488,7 @@ function buildSessionListItem(session: RuntimeSession, currentSessionId: string)
 		modifiedAt: session.updatedAt || session.createdAt || nowIso(),
 		createdAt: session.createdAt || null,
 		isCurrent: session.id === currentSessionId,
+		...(session.connector ? { connectorClient: session.connector.client } : {}),
 	};
 }
 
@@ -7104,6 +7150,8 @@ function buildAttachmentContext(attachments: any[] = []) {
 }
 
 function buildRecentConversationContext(session: RuntimeSession) {
+	// A chat app's marks and notes are not Onhand's own conversation.
+	if (session.connector) return "";
 	const recentTurns = (Array.isArray(session.turns) ? session.turns : [])
 		.filter((turn) => turn && !turn.pending && !turn.error && (turn.userPrompt || turn.reply))
 		.slice(-RECENT_CONTEXT_TURN_LIMIT);
@@ -15341,6 +15389,95 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		return await result;
 	}
 
+	// Marks a chat app made on a page through the connector, kept as a session
+	// in history so the reader can find them again and put them back after a
+	// reload. Onhand never sees that app's answer: the record is the page, the
+	// highlights, their notes and (when the app gives one) the question.
+	//
+	// One session per app and stretch of use (marks within half an hour of the
+	// last go to the same session), one turn per question. The reader's own
+	// session is never switched: the new one only appears in history.
+	const CONNECTOR_SESSION_WINDOW_MS = 30 * 60 * 1000;
+	const CONNECTOR_TURN_WINDOW_MS = 3 * 60 * 1000;
+	let connectorRecordQueue: Promise<unknown> = Promise.resolve();
+	// Starts at the clock so a restarted worker never repeats a value an open
+	// panel has already seen.
+	let sessionListRevision = Date.now();
+
+	async function recordConnectorMarks(input: any = {}) {
+		const save = async () => {
+			const client = compactActionText(input.client).slice(0, 40) || CONNECTOR_GENERIC_CLIENT;
+			const question = truncate(compactActionText(input.question), 200);
+			const marks: Array<{ highlight: PageAction; note: PageAction | null } | null> = (Array.isArray(input.marks) ? input.marks : []).map((mark: any) => {
+				const highlight = mark?.highlight ? buildPageAction("browser_highlight_text", mark.highlight) : null;
+				if (!highlight?.annotationId) return null;
+				const note = mark?.note ? buildPageAction("browser_show_note", mark.note) : null;
+				if (note) {
+					note.framed = true;
+					// The note sits on its highlight's page even when the note's own
+					// result did not say which tab that is.
+					for (const field of ["tabId", "windowId", "title", "url"] as const) {
+						if (note[field] == null && highlight[field] != null) (note as any)[field] = highlight[field];
+					}
+				}
+				return { highlight, note };
+			});
+			const placed = marks.filter(Boolean) as Array<{ highlight: PageAction; note: PageAction | null }>;
+			if (!placed.length) return { sessionId: "", actionKeys: marks.map(() => "") };
+
+			const store = await loadStore();
+			const now = Date.now();
+			const age = (iso: string) => now - (Date.parse(iso) || 0);
+			let session = (Object.values(store.sessions) as RuntimeSession[])
+				.filter((candidate) => candidate?.connector && candidate.connector.client === client && age(candidate.updatedAt) < CONNECTOR_SESSION_WINDOW_MS)
+				.sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))[0];
+			const firstPage = compactActionText(placed[0].highlight.title) || compactActionText(placed[0].highlight.url);
+			if (!session) {
+				session = createSession(`${client}: ${buildSessionTitleFromPrompt(question || firstPage || "highlights")}`);
+				session.connector = { client, titled: Boolean(question) };
+				store.sessions[session.id] = session;
+			} else if (question && !session.connector!.titled) {
+				// Titled after its page until the app says what was asked.
+				session.name = `${client}: ${buildSessionTitleFromPrompt(question)}`;
+				session.connector = { ...session.connector!, titled: true };
+			}
+
+			// A model often places an answer's highlights over two or three calls
+			// (a quote that missed is sent again): those belong to one turn.
+			const last = session.turns[session.turns.length - 1];
+			const continues = Boolean(
+				last && typeof last.connectorOrigin === "string" && age(last.createdAt) < CONNECTOR_TURN_WINDOW_MS && (!question || !last.userPrompt || last.userPrompt === question),
+			);
+			const turn: UiTurn = continues
+				? last
+				: { id: `connector:${crypto.randomUUID()}`, connectorOrigin: client, userPrompt: question, reply: "", createdAt: nowIso(), activities: [], pageActions: [], pending: false, error: false };
+			if (continues && question && !turn.userPrompt) turn.userPrompt = question;
+			const byKey = new Map<string, PageAction>((turn.pageActions || []).map((action) => [action.key, action]));
+			for (const mark of placed) {
+				// A passage sent again is the mark already recorded, not a new one.
+				if (!byKey.has(mark.highlight.key)) byKey.set(mark.highlight.key, mark.highlight);
+				if (mark.note) byKey.set(mark.note.key, mark.note);
+			}
+			turn.pageActions = Array.from(byKey.values());
+			turn.reply = buildConnectorTurnReply(client, turn.pageActions);
+			if (!continues) session.turns = [...session.turns, turn];
+			session.pageActions = [...turn.pageActions];
+			session.messages = createStoredConversationMessages(session.turns);
+			session.updatedAt = nowIso();
+			await saveStore(store, { sessions: [session] });
+			sessionListRevision += 1;
+			if (store.currentSessionId === session.id && !activeRequest) {
+				await publishState({ currentSession: buildSessionState(session), turns: session.turns, messages: buildConversationMessages(session.messages), pageActions: session.pageActions });
+			}
+			// A link to a mark opens its note when it has one, so that a mark
+			// lost to a reload comes back whole.
+			return { sessionId: session.id, actionKeys: marks.map((mark) => (mark ? (mark.note || mark.highlight).key : "")) };
+		};
+		const result = connectorRecordQueue.then(save);
+		connectorRecordQueue = result.catch(() => {});
+		return await result;
+	}
+
 	// Which of the latest answer's highlights a spoken "next highlight" last
 	// showed; reset when the set of highlights changes.
 	let voiceHighlightCursor: { key: string; index: number } | null = null;
@@ -18354,6 +18491,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 							note: annotation.noteText,
 							label: annotation.noteLabel || "Onhand",
 							scrollIntoView: false,
+							...(annotation.noteFramed ? { framed: true } : {}),
 						});
 						restoredNotes += 1;
 					}
@@ -18415,7 +18553,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 		// A mark that was already on the page under another id keeps its own note.
 		if (annotation.noteText && !highlighted.annotation.reusedExisting) {
 			try {
-				await host.runCommand("show_note", { tabId: tab.id, annotationId, note: annotation.noteText, label: annotation.noteLabel || "Onhand", scrollIntoView: false });
+				await host.runCommand("show_note", { tabId: tab.id, annotationId, note: annotation.noteText, label: annotation.noteLabel || "Onhand", scrollIntoView: false, ...(annotation.noteFramed ? { framed: true } : {}) });
 			} catch (error) {
 				host.log?.("restored highlight note failed", error);
 			}
@@ -18527,13 +18665,16 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			}
 			const historyRevision = `${sidebarHistoryEpoch}:${sidebarHistoryRevision}`;
 			const historyUnchanged = params.knownHistoryRevision === historyRevision;
+			// Goes up when a session appears without the panel asking for one (a
+			// chat app's marks), so an open panel knows to list sessions again.
+			const listed = { sessionListRevision };
 			if (historyUnchanged) {
 				// Keep all live context, page actions, settings and status fields.
 				// The caller may reuse only the two explicitly omitted history arrays.
 				const { turns: _turns, messages: _messages, ...partialState } = state;
-				return { state: partialState, historyRevision, historyUnchanged };
+				return { state: { ...partialState, ...listed }, historyRevision, historyUnchanged };
 			}
-			return { state, historyRevision, historyUnchanged };
+			return { state: { ...state, ...listed }, historyRevision, historyUnchanged };
 		},
 
 		invalidateReviewCache() {
@@ -18608,6 +18749,10 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 
 		async recordLiveTranscriptTurns(request: any) {
 			return await recordLiveTranscriptTurns(request);
+		},
+
+		async recordConnectorMarks(request: any) {
+			return await recordConnectorMarks(request);
 		},
 
 		async getSettings() {
@@ -18984,7 +19129,9 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			return await runSessionTransition(async () => {
 				if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before starting a new session.");
 				const targetWindowId = typeof options?.targetWindowId === "number" && Number.isFinite(options.targetWindowId) ? options.targetWindowId : undefined;
-				await clearActivePageAnnotations(targetWindowId);
+				// keepPageMarks: leaving a record of a chat app's marks to talk to
+				// Onhand should not wipe the marks the reader is looking at.
+				if (options?.keepPageMarks !== true) await clearActivePageAnnotations(targetWindowId);
 				const store = await loadStore();
 				const session = createSession();
 				session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
@@ -19186,8 +19333,18 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			submissionInProgress = true;
 			try {
 				const store = await loadStore();
-				const session = store.sessions[store.currentSessionId] as RuntimeSession;
+				let session = store.sessions[store.currentSessionId] as RuntimeSession;
 				if (request.source === "live-voice" && request.sessionId !== session.id) throw new Error("The voice conversation changed. Start Voice again in this session.");
+				if (session?.connector) {
+					// A record of another app's marks stays a record: its notes are
+					// that app's words, and none of them go into Onhand's model
+					// context. The reader's question gets a session of its own.
+					if (request.source === "live-voice") throw new Error("Start a new session to talk with Onhand; this one keeps another app's highlights.");
+					session = createSession();
+					session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
+					store.sessions[session.id] = session;
+					store.currentSessionId = session.id;
+				}
 				const prompt = String(request?.prompt || "").trim();
 				const displayPrompt = String(request?.displayPrompt || prompt || "").trim() || "Attached files";
 				const attachments = Array.isArray(request?.attachments) ? request.attachments : [];
@@ -19775,6 +19932,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 								note: noteText,
 								label: storedOnPageNoteTitle(action.noteLabel) || ON_PAGE_NOTE_DEFAULT_LABEL,
 								scrollIntoView: true,
+								...(action.framed ? { framed: true } : {}),
 							});
 							noteShown = true;
 						}
@@ -19791,6 +19949,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 							note: noteText,
 							label: storedOnPageNoteTitle(action.noteLabel) || ON_PAGE_NOTE_DEFAULT_LABEL,
 							scrollIntoView: true,
+							...(action.framed ? { framed: true } : {}),
 						});
 					}
 				}

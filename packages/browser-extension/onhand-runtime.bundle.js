@@ -90888,7 +90888,7 @@ function buildReplayAnnotationsFromPageActions(pageActions = []) {
     if (action.type === "note") {
       const noteText = compactActionText(action.citationText || action.detail);
       if (!noteText) continue;
-      notes.set(replayActionKey(action), { action, text: noteText, label: storedOnPageNoteTitle(action.noteLabel) });
+      notes.set(replayActionKey(action), { action, text: noteText, label: storedOnPageNoteTitle(action.noteLabel), framed: action.framed === true });
       continue;
     }
     const isHighlight = action.type === "annotation" && (String(action.key || "").startsWith("highlight:") || action.label === "Highlighted text");
@@ -90922,6 +90922,7 @@ function buildReplayAnnotationsFromPageActions(pageActions = []) {
     if (!annotation) continue;
     annotation.noteText = note.text;
     if (note.label) annotation.noteLabel = note.label;
+    if (note.framed) annotation.noteFramed = true;
     mergeReplayTarget(annotation, note.action);
   }
   return Array.from(annotations.values());
@@ -90999,6 +91000,7 @@ function buildSessionNotesMarkdown(session, exportedAt = /* @__PURE__ */ new Dat
   };
 }
 function buildExistingAnchorContext(session, maxAnchors = 8) {
+  if (session.connector) return "";
   const annotations = buildReplayAnnotationsFromPageActions(collectSessionPageActions(session));
   if (!annotations.length) return "";
   const lines = annotations.slice(-maxAnchors).map((annotation, index) => {
@@ -91209,11 +91211,33 @@ function createEmptyState(session, settings2) {
     updatedAt: Date.now()
   };
 }
+var CONNECTOR_GENERIC_CLIENT = "A chat app";
+function buildConnectorTurnReply(client, actions) {
+  const pages = /* @__PURE__ */ new Map();
+  for (const highlight of actions.filter((action) => action?.type === "annotation" && String(action.key || "").startsWith("highlight:"))) {
+    const annotationId = compactActionText(highlight.annotationId);
+    if (!annotationId) continue;
+    const note = actions.find((action) => action?.type === "note" && compactActionText(action.annotationId) === annotationId);
+    const noteText = note ? compactActionText(note.citationText || note.detail) : "";
+    const heading = note ? storedOnPageNoteTitle(note.noteLabel).replace(/[*_`[\]<>]/g, "").trim() : "";
+    const body = noteText ? `${heading ? `**${heading}.** ` : ""}${noteText}` : `\u201C${truncate2(compactActionText(highlight.citationText || highlight.detail), 160)}\u201D`;
+    const pageKey = compactActionText(highlight.url) || compactActionText(highlight.title) || "page";
+    const page = pages.get(pageKey) || { title: compactActionText(highlight.title) || compactActionText(highlight.url) || "the page", lines: [] };
+    page.lines.push(`- ${body} [[cite:${annotationId}]]`);
+    pages.set(pageKey, page);
+  }
+  return Array.from(pages.values()).map((page) => `${client} marked ${page.lines.length} passage${page.lines.length === 1 ? "" : "s"} on \u201C${truncate2(page.title, 90)}\u201D:
+
+${page.lines.join("\n")}`).join("\n\n");
+}
 function buildSessionState(session) {
   return {
     sessionId: session.id,
     sessionFile: session.id,
-    sessionName: session.name
+    sessionName: session.name,
+    // Set when the session records a chat app's marks, not a conversation
+    // with Onhand.
+    ...session.connector ? { connectorClient: session.connector.client } : {}
   };
 }
 function buildSessionListItem(session, currentSessionId) {
@@ -91243,7 +91267,8 @@ function buildSessionListItem(session, currentSessionId) {
     canRestore: artifactCount > 0 || replayableCount > 0,
     modifiedAt: session.updatedAt || session.createdAt || nowIso(),
     createdAt: session.createdAt || null,
-    isCurrent: session.id === currentSessionId
+    isCurrent: session.id === currentSessionId,
+    ...session.connector ? { connectorClient: session.connector.client } : {}
   };
 }
 function normalizeAssistantTextBlockIndex(value, fallback = 0) {
@@ -92544,6 +92569,7 @@ ${attachment.text}
   }).filter(Boolean).join("\n\n");
 }
 function buildRecentConversationContext(session) {
+  if (session.connector) return "";
   const recentTurns = (Array.isArray(session.turns) ? session.turns : []).filter((turn) => turn && !turn.pending && !turn.error && (turn.userPrompt || turn.reply)).slice(-RECENT_CONTEXT_TURN_LIMIT);
   if (!recentTurns.length) return "";
   return recentTurns.map(
@@ -99233,6 +99259,70 @@ function createOnhandBrowserRuntime(host) {
     });
     return await result;
   }
+  const CONNECTOR_SESSION_WINDOW_MS = 30 * 60 * 1e3;
+  const CONNECTOR_TURN_WINDOW_MS = 3 * 60 * 1e3;
+  let connectorRecordQueue = Promise.resolve();
+  let sessionListRevision = Date.now();
+  async function recordConnectorMarks(input = {}) {
+    const save = async () => {
+      const client = compactActionText(input.client).slice(0, 40) || CONNECTOR_GENERIC_CLIENT;
+      const question = truncate2(compactActionText(input.question), 200);
+      const marks = (Array.isArray(input.marks) ? input.marks : []).map((mark) => {
+        const highlight = mark?.highlight ? buildPageAction("browser_highlight_text", mark.highlight) : null;
+        if (!highlight?.annotationId) return null;
+        const note = mark?.note ? buildPageAction("browser_show_note", mark.note) : null;
+        if (note) {
+          note.framed = true;
+          for (const field of ["tabId", "windowId", "title", "url"]) {
+            if (note[field] == null && highlight[field] != null) note[field] = highlight[field];
+          }
+        }
+        return { highlight, note };
+      });
+      const placed = marks.filter(Boolean);
+      if (!placed.length) return { sessionId: "", actionKeys: marks.map(() => "") };
+      const store2 = await loadStore();
+      const now = Date.now();
+      const age = (iso) => now - (Date.parse(iso) || 0);
+      let session = Object.values(store2.sessions).filter((candidate) => candidate?.connector && candidate.connector.client === client && age(candidate.updatedAt) < CONNECTOR_SESSION_WINDOW_MS).sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))[0];
+      const firstPage = compactActionText(placed[0].highlight.title) || compactActionText(placed[0].highlight.url);
+      if (!session) {
+        session = createSession(`${client}: ${buildSessionTitleFromPrompt(question || firstPage || "highlights")}`);
+        session.connector = { client, titled: Boolean(question) };
+        store2.sessions[session.id] = session;
+      } else if (question && !session.connector.titled) {
+        session.name = `${client}: ${buildSessionTitleFromPrompt(question)}`;
+        session.connector = { ...session.connector, titled: true };
+      }
+      const last = session.turns[session.turns.length - 1];
+      const continues = Boolean(
+        last && typeof last.connectorOrigin === "string" && age(last.createdAt) < CONNECTOR_TURN_WINDOW_MS && (!question || !last.userPrompt || last.userPrompt === question)
+      );
+      const turn = continues ? last : { id: `connector:${crypto.randomUUID()}`, connectorOrigin: client, userPrompt: question, reply: "", createdAt: nowIso(), activities: [], pageActions: [], pending: false, error: false };
+      if (continues && question && !turn.userPrompt) turn.userPrompt = question;
+      const byKey = new Map((turn.pageActions || []).map((action) => [action.key, action]));
+      for (const mark of placed) {
+        if (!byKey.has(mark.highlight.key)) byKey.set(mark.highlight.key, mark.highlight);
+        if (mark.note) byKey.set(mark.note.key, mark.note);
+      }
+      turn.pageActions = Array.from(byKey.values());
+      turn.reply = buildConnectorTurnReply(client, turn.pageActions);
+      if (!continues) session.turns = [...session.turns, turn];
+      session.pageActions = [...turn.pageActions];
+      session.messages = createStoredConversationMessages(session.turns);
+      session.updatedAt = nowIso();
+      await saveStore(store2, { sessions: [session] });
+      sessionListRevision += 1;
+      if (store2.currentSessionId === session.id && !activeRequest) {
+        await publishState({ currentSession: buildSessionState(session), turns: session.turns, messages: buildConversationMessages(session.messages), pageActions: session.pageActions });
+      }
+      return { sessionId: session.id, actionKeys: marks.map((mark) => mark ? (mark.note || mark.highlight).key : "") };
+    };
+    const result = connectorRecordQueue.then(save);
+    connectorRecordQueue = result.catch(() => {
+    });
+    return await result;
+  }
   let voiceHighlightCursor = null;
   async function gatherVoiceCommandContext(input, { forState = false } = {}) {
     const prompt = String(input.prompt || "").replace(/\s+/g, " ").trim();
@@ -101876,7 +101966,8 @@ function createOnhandBrowserRuntime(host) {
               annotationId,
               note: annotation.noteText,
               label: annotation.noteLabel || "Onhand",
-              scrollIntoView: false
+              scrollIntoView: false,
+              ...annotation.noteFramed ? { framed: true } : {}
             });
             restoredNotes += 1;
           }
@@ -101923,7 +102014,7 @@ function createOnhandBrowserRuntime(host) {
     updateSessionReplayActionTargets(session, annotation, tab, highlighted.annotation);
     if (annotation.noteText && !highlighted.annotation.reusedExisting) {
       try {
-        await host.runCommand("show_note", { tabId: tab.id, annotationId, note: annotation.noteText, label: annotation.noteLabel || "Onhand", scrollIntoView: false });
+        await host.runCommand("show_note", { tabId: tab.id, annotationId, note: annotation.noteText, label: annotation.noteLabel || "Onhand", scrollIntoView: false, ...annotation.noteFramed ? { framed: true } : {} });
       } catch (error2) {
         host.log?.("restored highlight note failed", error2);
       }
@@ -102017,11 +102108,12 @@ function createOnhandBrowserRuntime(host) {
       }
       const historyRevision = `${sidebarHistoryEpoch}:${sidebarHistoryRevision}`;
       const historyUnchanged = params.knownHistoryRevision === historyRevision;
+      const listed = { sessionListRevision };
       if (historyUnchanged) {
         const { turns: _turns, messages: _messages, ...partialState } = state2;
-        return { state: partialState, historyRevision, historyUnchanged };
+        return { state: { ...partialState, ...listed }, historyRevision, historyUnchanged };
       }
-      return { state: state2, historyRevision, historyUnchanged };
+      return { state: { ...state2, ...listed }, historyRevision, historyUnchanged };
     },
     invalidateReviewCache() {
       invalidateDueReviewCache();
@@ -102087,6 +102179,9 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
     },
     async recordLiveTranscriptTurns(request2) {
       return await recordLiveTranscriptTurns(request2);
+    },
+    async recordConnectorMarks(request2) {
+      return await recordConnectorMarks(request2);
     },
     async getSettings() {
       return await getPublicSettings();
@@ -102431,7 +102526,7 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
       return await runSessionTransition(async () => {
         if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before starting a new session.");
         const targetWindowId = typeof options?.targetWindowId === "number" && Number.isFinite(options.targetWindowId) ? options.targetWindowId : void 0;
-        await clearActivePageAnnotations(targetWindowId);
+        if (options?.keepPageMarks !== true) await clearActivePageAnnotations(targetWindowId);
         const store2 = await loadStore();
         const session = createSession();
         session.learnerState = setLearnerStateMode(session.learnerState, store2.settings.learningMode ? "learning" : "answer");
@@ -102605,8 +102700,15 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
       submissionInProgress = true;
       try {
         const store2 = await loadStore();
-        const session = store2.sessions[store2.currentSessionId];
+        let session = store2.sessions[store2.currentSessionId];
         if (request2.source === "live-voice" && request2.sessionId !== session.id) throw new Error("The voice conversation changed. Start Voice again in this session.");
+        if (session?.connector) {
+          if (request2.source === "live-voice") throw new Error("Start a new session to talk with Onhand; this one keeps another app's highlights.");
+          session = createSession();
+          session.learnerState = setLearnerStateMode(session.learnerState, store2.settings.learningMode ? "learning" : "answer");
+          store2.sessions[session.id] = session;
+          store2.currentSessionId = session.id;
+        }
         const prompt = String(request2?.prompt || "").trim();
         const displayPrompt = String(request2?.displayPrompt || prompt || "").trim() || "Attached files";
         const attachments = Array.isArray(request2?.attachments) ? request2.attachments : [];
@@ -103130,7 +103232,8 @@ Mark and answer from this text. Call browser_extract_content again only to conti
                 annotationId,
                 note: noteText,
                 label: storedOnPageNoteTitle(action.noteLabel) || ON_PAGE_NOTE_DEFAULT_LABEL,
-                scrollIntoView: true
+                scrollIntoView: true,
+                ...action.framed ? { framed: true } : {}
               });
               noteShown = true;
             }
@@ -103146,7 +103249,8 @@ Mark and answer from this text. Call browser_extract_content again only to conti
               annotationId,
               note: noteText,
               label: storedOnPageNoteTitle(action.noteLabel) || ON_PAGE_NOTE_DEFAULT_LABEL,
-              scrollIntoView: true
+              scrollIntoView: true,
+              ...action.framed ? { framed: true } : {}
             });
           }
         }

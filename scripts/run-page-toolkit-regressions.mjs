@@ -3137,6 +3137,75 @@ async function assertWebNoteInsidePdfLookalikeWrapperStaysInFlow() {
 // A note is headed by its own title when the call gives one. A title keeps
 // its casing (the plain "Onhand" header is the only one set in capitals), and
 // the result reports the header that was drawn so it can be saved with the note.
+// A note's code spans and formulas are rendered first and swapped back in
+// after the rest is escaped. The stand-in used to be a fixed string, so note
+// text could name one, and KaTeX echoes an invalid colour or size whole into
+// a title attribute: a rendered piece swapped in there cut the tag short and
+// left markup the note's author had shaped. Note text comes from a model
+// that has read the page, so it must never get that far.
+async function assertNoteTextCannotBendNoteMarkup() {
+	const source = await readSourceFile("packages/browser-extension/background.js");
+	const cut = (from, to) => {
+		const start = source.indexOf(from);
+		const end = source.indexOf(to, start);
+		assert.notEqual(start, -1, `${from} not found`);
+		assert.notEqual(end, -1, `${to} not found`);
+		return source.slice(start, end);
+	};
+	const katex = (await import("../packages/browser-extension/vendor/katex.mjs")).default;
+	const { window } = new JSDOM("<!doctype html><body></body>", { runScripts: "outside-only" });
+	window.__katex = katex;
+	const render = window.eval(`(() => {
+		${cut("const escapeHtml = (value) =>", "const cssEscape")}
+		${cut("const NOTE_TOKEN_OPEN = ", "const ensureNoteKatexLoaded")}
+		return (text, withKatex = true) => {
+			noteKatexModule = withKatex ? window.__katex : null;
+			return renderNoteRichText(text);
+		};
+	})()`);
+	const parse = (html) => {
+		const host = window.document.createElement("div");
+		host.innerHTML = html;
+		return host;
+	};
+	const allowedAttributes = new Set(["class", "title", "style", "xmlns", "encoding", "display", "mathcolor", "data-onhand-note-part"]);
+	const strayAttributes = (host) =>
+		[...host.querySelectorAll("*")].flatMap((element) => [...element.attributes].map((attribute) => attribute.name).filter((name) => !allowedAttributes.has(name)));
+
+	// Ordinary notes render as before.
+	const ordinary = parse(render("Use `zip(a, b)` here: **two lists**, *one pass*, and $x^2$."));
+	assert.equal(ordinary.querySelector('code[data-onhand-note-part="code"]').textContent, "zip(a, b)");
+	assert.equal(ordinary.querySelector("strong").textContent, "two lists");
+	assert.equal(ordinary.querySelector("em").textContent, "one pass");
+	assert.equal(ordinary.querySelectorAll("span.onhand-note-math-inline math").length, 1);
+	assert.deepEqual(strayAttributes(ordinary), []);
+
+	const handler = " onmouseover=alert(1) x=1 ";
+	const standIns = (index) => [`@@ONHAND_NOTE_TOKEN_${index}@@`, `\uE000${index}\uE001`];
+	for (const [first, second] of [standIns(0), standIns(1)].flatMap(([oldA, newA]) => [[oldA, standIns(2)[0]], [newA, standIns(2)[1]]])) {
+		for (const note of [
+			`\\[\\textcolor{${first}}{x}\\] $y$`,
+			`\\[\\textcolor{${first}}{x}\\] $\\textcolor{${handler}}{y}$`,
+			`\\[\\kern{${first}}\\] $$\\textcolor{${second}}{x}$$ $\\kern{${handler}}$`,
+			`\`${first}\` \`${handler}\` ${first}${second}`,
+		]) {
+			for (const withKatex of [true, false]) {
+				const html = render(note, withKatex);
+				const host = parse(html);
+				assert.deepEqual(strayAttributes(host), [], `no attribute comes from note text: ${JSON.stringify(note)}`);
+				assert.doesNotMatch(html, /[\uE000\uE001]/, "no stand-in is left in the output");
+				assert.doesNotMatch(html, /title="[^"]*<(?:code|span|div) /, "no rendered piece lands inside an attribute");
+			}
+		}
+	}
+	// Markup written into a note stays text.
+	const literal = parse(render('<img src=x onerror=alert(1)> "quoted" $\\text{<b>}$'));
+	assert.equal(literal.querySelector("img, b"), null);
+	// A code span inside a formula is rendered from the text as written.
+	assert.match(parse(render("$\\text{`a`}$")).textContent, /`a`/);
+	console.log("Note text cannot place rendered pieces inside markup passed");
+}
+
 async function assertNotesShowTheirTitle() {
 	const { dom, toolkit } = await createToolkit(`
 		<main>
@@ -3171,6 +3240,182 @@ async function assertNotesShowTheirTitle() {
 	const capturedTitles = [...(captured?.annotations || [])].map((annotation) => annotation?.note?.label);
 	assert.deepEqual(capturedTitles, ["Why pH holds", "Onhand", "Onhand"], "a captured page keeps each note's header");
 	console.log("Notes show their title; untitled notes keep the plain header passed");
+}
+
+// A note an outside app writes through the connector can quote another tab.
+// Framed, its title and text must appear nowhere in the page it sits on: the
+// page gets a card holding a frame from Onhand's own origin, and that frame
+// collects the words from the extension.
+async function assertFramedNoteKeepsItsWordsOutOfThePage() {
+	const origin = "chrome-extension://abcdefghijklmnopabcdefghijklmnop";
+	const frame = { url: `${origin}/note-frame.html`, token: "ab".repeat(32), waitMs: 0 };
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<p>Zest two lemons and whisk the zest into the sugar.</p>
+			<p>Fold in the flour in three additions.</p>
+			<p>Let the cake cool in its tin for ten minutes.</p>
+		</main>
+	`);
+	const { document } = dom.window;
+	const cardFor = (annotationId) => document.querySelector(`[data-onhand-note-for="${annotationId}"]`);
+
+	const first = await toolkit.highlightText("Zest two lemons", { scrollIntoView: false });
+	const shown = await toolkit.showNote(first.annotationId, "", { label: "", frame, scrollIntoView: false });
+	assert.equal(shown.framed, true);
+	assert.equal(shown.frameLoaded, false, "a frame that has not reported is said to be missing, not assumed drawn");
+	assert.equal(shown.text, "");
+	assert.equal(shown.label, "");
+	const card = cardFor(first.annotationId);
+	const frameElement = card.querySelector("iframe");
+	assert.equal(card.getAttribute("data-onhand-note-framed"), "true");
+	assert.equal(frameElement.getAttribute("src"), `${frame.url}?theme=light&layout=fit#${frame.token}`);
+	assert.equal(card.textContent, "", "a framed card holds no text of its own");
+	assert.equal(card.querySelector("[data-onhand-note-source]"), null);
+	assert.equal(card.querySelector('[data-onhand-note-part="label"]'), null);
+
+	// The extension's side sends no words with a framed note. Should a caller
+	// send them anyway, they are still not drawn in the page.
+	const second = await toolkit.highlightText("Fold in the flour", { scrollIntoView: false });
+	await toolkit.showNote(second.annotationId, "Your one-time sign-in code is 481-992.", { label: "Bank mail", frame: { ...frame, token: "cd".repeat(32) }, scrollIntoView: false });
+	assert.equal(document.documentElement.outerHTML.includes("481-992"), false);
+	assert.equal(document.documentElement.outerHTML.includes("Bank mail"), false);
+
+	// The frame tells the page its note's size and nothing else, and only
+	// Onhand's own frame is believed.
+	const post = (from, data) => dom.window.dispatchEvent(new dom.window.MessageEvent("message", { origin: from, data }));
+	const heightBefore = frameElement.style.height;
+	post("https://example.test", { type: "onhand-note-frame-size", token: frame.token, width: 300, height: 90 });
+	assert.equal(frameElement.style.height, heightBefore, "a size the page posts itself is ignored");
+	post(origin, { type: "onhand-note-frame-size", token: frame.token, width: 1e9, height: -1 });
+	assert.equal(frameElement.style.height, heightBefore, "a nonsense size is ignored");
+	post(origin, { type: "onhand-note-frame-size", token: frame.token, width: 300.2, height: 89.5 });
+	assert.equal(frameElement.style.width, "301px");
+	assert.equal(frameElement.style.height, "90px");
+
+	// A frame that reports within the wait counts as drawn.
+	const third = await toolkit.highlightText("Let the cake cool", { scrollIntoView: false });
+	const lateFrame = { ...frame, token: "ef".repeat(32), waitMs: 2000 };
+	setTimeout(() => post(origin, { type: "onhand-note-frame-size", token: lateFrame.token, width: 200, height: 60 }), 20);
+	const drawn = await toolkit.showNote(third.annotationId, "", { frame: lateFrame, scrollIntoView: false });
+	assert.equal(drawn.frameLoaded, true);
+
+	// A frame that is not Onhand's is refused; the note is not drawn in the page instead.
+	await assert.rejects(toolkit.showNote(first.annotationId, "x", { frame: { url: "https://evil.example/note-frame.html", token: frame.token } }), /note frame it cannot use/);
+	await assert.rejects(toolkit.showNote(first.annotationId, "x", { frame: { url: frame.url, token: "short" } }), /note frame it cannot use/);
+	assert.equal(cardFor(first.annotationId).querySelector("iframe") === frameElement, true, "a refused note leaves the earlier one in place");
+
+	// The page's own account of a framed note names its frame and holds no words.
+	const captured = await toolkit.captureState();
+	const notes = [...(captured?.annotations || [])].map((annotation) => annotation?.note);
+	assert.deepEqual(notes.map((note) => note?.frameToken), [frame.token, "cd".repeat(32), lateFrame.token]);
+	assert.deepEqual(notes.map((note) => note?.text), ["", "", ""]);
+	dom.window.close();
+
+	// On a page laid out like a PDF viewer the card floats over the page and
+	// keeps its collapse button; the title and text are still in the frame.
+	const quote = "Plants absorb light and convert it into chemical energy.";
+	const pdf = await createToolkit(`<main class="pdfViewer"><div class="page" data-page-number="2"><div class="canvasWrapper"></div><div class="textLayer"><span>${quote}</span></div></div></main>`);
+	const page = pdf.dom.window.document.querySelector(".page");
+	setElementRect(page, { left: 0, top: 0, width: 600, height: 800 });
+	Object.defineProperties(page, { clientWidth: { value: 600 }, clientHeight: { value: 800 } });
+	setElementRect(pdf.dom.window.document.querySelector(".textLayer span"), { left: 50, top: 100, width: 500, height: 24 });
+	const pdfMark = await pdf.toolkit.highlightText(quote, { scrollIntoView: false });
+	const pdfShown = await pdf.toolkit.showNote(pdfMark.annotationId, "Light reactions come first.", { label: "Photosynthesis", frame, scrollIntoView: false });
+	assert.equal(pdfShown.insertionPosition, "pdf-overlay");
+	assert.equal(pdfShown.framed, true);
+	const pdfCard = pdf.dom.window.document.querySelector(`[data-onhand-note-for="${pdfMark.annotationId}"]`);
+	assert.equal(pdfCard.hasAttribute("data-onhand-pdf-note"), true);
+	assert.equal(pdfCard.querySelector("iframe").getAttribute("src"), `${frame.url}?theme=light&layout=fill#${frame.token}`);
+	assert.equal(pdfCard.textContent, "x", "only the collapse button's own letter is in the page");
+	assert.equal(pdf.dom.window.document.documentElement.outerHTML.includes("Light reactions"), false);
+	assert.equal(pdf.dom.window.document.documentElement.outerHTML.includes("Photosynthesis"), false);
+	pdfCard.querySelector("[data-onhand-note-toggle]").click();
+	assert.equal(pdfCard.getAttribute("data-onhand-note-collapsed"), "true");
+	assert.equal(pdfCard.querySelector("iframe").hidden, true, "collapsing hides the frame");
+	pdf.dom.window.close();
+
+	// Inside Onhand's own frame the same code draws the note in full.
+	const inside = await createToolkit("<main></main>");
+	const content = await inside.toolkit.drawNoteInFrame("Your one-time sign-in code is 481-992. Use `zip(a, b)`.", { label: "Bank mail" });
+	assert.equal(inside.dom.window.document.body.children.length, 1, "the note is the frame's whole content");
+	assert.equal(content.querySelector('[data-onhand-note-part="label"]').textContent, "Bank mail");
+	assert.match(content.querySelector('[data-onhand-note-part="body"]').textContent, /481-992/);
+	assert.equal(content.querySelector("code").textContent, "zip(a, b)");
+	inside.dom.window.close();
+
+	console.log("A framed note keeps its title and text out of the page passed");
+}
+
+// The extension's side of a framed note: the words wait under a random name
+// that only an extension page can redeem.
+async function assertFramedNoteWordsWaitInTheExtension() {
+	const source = await readSourceFile("packages/browser-extension/background.js");
+	const constantsStart = source.indexOf('const NOTE_FRAME_STORAGE_PREFIX = "onhandNoteFrame:";');
+	const constantsEnd = source.indexOf("async function createNoteFrame");
+	assert.ok(constantsStart > 0 && constantsEnd > constantsStart, "note frame constants not found");
+	const store = new Map();
+	const list = (keys) => (Array.isArray(keys) ? keys : [keys]);
+	const chrome = {
+		storage: {
+			session: {
+				set: async (items) => Object.entries(items).forEach(([key, value]) => store.set(key, structuredClone(value))),
+				get: async (keys) => Object.fromEntries(keys == null ? [...store] : list(keys).filter((key) => store.has(key)).map((key) => [key, store.get(key)])),
+				remove: async (keys) => list(keys).forEach((key) => store.delete(key)),
+			},
+		},
+		runtime: { getURL: (path) => `chrome-extension://abcdefghijklmnopabcdefghijklmnop/${path}` },
+	};
+	const functions = await Promise.all(["createNoteFrame", "readNoteFrames", "pruneNoteFrames", "fillFramedNoteText"].map((name) => loadBackgroundFunction(name)));
+	const api = new Function(
+		"chrome",
+		"getPageToolkitOptions",
+		`${source.slice(constantsStart, constantsEnd)}\n${functions.join("\n")}\nreturn { createNoteFrame, readNoteFrames, pruneNoteFrames, fillFramedNoteText, NOTE_FRAME_KEEP };`,
+	)(chrome, async () => ({ fontUrls: { newYorkRegular: "font-url" }, katexUrl: "katex-url", theme: "dark" }));
+
+	const frame = await api.createNoteFrame(7, "  Your code is 481-992.  ", "  Bank   mail ");
+	assert.equal(frame.url, "chrome-extension://abcdefghijklmnopabcdefghijklmnop/note-frame.html");
+	assert.match(frame.token, /^[0-9a-f]{64}$/);
+	assert.equal(frame.url.includes(frame.token), false);
+	const record = store.get(`onhandNoteFrame:${frame.token}`);
+	assert.equal(record.text, "Your code is 481-992.");
+	assert.equal(record.label, "Bank mail");
+	assert.equal(record.tabId, 7);
+	assert.deepEqual(record.fontUrls, { newYorkRegular: "font-url" });
+	const other = await api.createNoteFrame(8, "x".repeat(20000), "");
+	assert.notEqual(other.token, frame.token, "every note gets its own name");
+	assert.equal(store.get(`onhandNoteFrame:${other.token}`).text.length, 8000, "a framed note's text is capped");
+
+	// A page's account of its notes gets the words back on the extension's side.
+	const page = { annotations: [{ note: { frameToken: frame.token, text: "", label: null } }, { note: { frameToken: "../../other-key", text: "", label: null } }, { note: null }, { note: { text: "In the page", label: "Onhand" } }] };
+	await api.fillFramedNoteText(page);
+	assert.deepEqual(page.annotations[0].note, { frameToken: frame.token, text: "Your code is 481-992.", label: "Bank mail" });
+	assert.equal(page.annotations[1].note.text, "", "a name that is not a note's is not looked up");
+	assert.equal(page.annotations[3].note.text, "In the page");
+
+	// Closing a tab drops its notes; the oldest go once too many are kept.
+	await api.pruneNoteFrames(7);
+	assert.equal(store.has(`onhandNoteFrame:${frame.token}`), false);
+	assert.equal(store.has(`onhandNoteFrame:${other.token}`), true);
+	store.set("somethingElse", { keep: true });
+	for (let index = 0; index < api.NOTE_FRAME_KEEP + 5; index += 1) store.set(`onhandNoteFrame:${String(index).padStart(64, "0")}`, { text: "t", tabId: 9, createdAt: index + 1 });
+	await api.pruneNoteFrames();
+	const kept = [...store.keys()].filter((key) => key.startsWith("onhandNoteFrame:"));
+	assert.equal(kept.length, api.NOTE_FRAME_KEEP);
+	assert.equal(store.has(`onhandNoteFrame:${"0".repeat(64)}`), false, "the oldest note is the one dropped");
+	assert.equal(store.has("somethingElse"), true, "nothing else in session storage is touched");
+
+	// The command sends a framed note's words to the store, never to the page.
+	assert.match(source, /runPageToolkitMethod\(tab\.id, "showNote", args\.annotationId, frame \? "" : args\.note, \{\s*label: frame \? "" : args\.label,/);
+	// The frame page: a web page may hold it, and it can load nothing from outside.
+	const manifest = JSON.parse(await readSourceFile("packages/browser-extension/manifest.json"));
+	assert.ok(manifest.web_accessible_resources.some((entry) => entry.resources.includes("note-frame.html")));
+	const framePage = await readSourceFile("packages/browser-extension/note-frame.html");
+	assert.match(framePage, /default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; base-uri 'none'; form-action 'none'/);
+	assert.deepEqual([...framePage.matchAll(/<script src="([^"]+)"/g)].map((match) => match[1]), ["page-toolkit-content.js", "note-frame.js"]);
+	// The connector asks for framed notes.
+	assert.match(await readSourceFile("packages/browser-extension/connector.js"), /runCommand\("show_note", \{[^}]*framed: true \}\)/);
+
+	console.log("A framed note's words wait in the extension, under a name only it can redeem passed");
 }
 
 async function assertExactSourceModeDoesNotApproximate() {
@@ -5602,6 +5847,9 @@ async function main() {
 	await assertLooseTextOutsideProseContainersHighlights();
 	await assertFuzzyMatchingWorksOutsideLatinScript();
 	await assertNotesShowTheirTitle();
+	await assertNoteTextCannotBendNoteMarkup();
+	await assertFramedNoteKeepsItsWordsOutOfThePage();
+	await assertFramedNoteWordsWaitInTheExtension();
 
 	console.log("Page toolkit regressions: PASS");
 }

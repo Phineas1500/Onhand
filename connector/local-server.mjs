@@ -35,9 +35,22 @@ const EXTENSION_WAIT_MS = 8000;
 // call that arrives right after this program starts waits that long once.
 const STARTUP_GRACE_MS = 35000;
 const MAX_FORWARD_BODY_BYTES = 256 * 1024;
+// A second copy of this program proves the pairing code to the copy that
+// owns the port, and checks that copy in turn, without sending the code.
+const FORWARD_HELLO_PREFIX = "onhand-forward-hello:";
+const FORWARD_CALL_PREFIX = "onhand-forward-call:";
+const FORWARD_RESULT_PREFIX = "onhand-forward-result:";
+const FORWARD_HELLO_TIMEOUT_MS = 5000;
+const FORWARD_NONCE_TTL_MS = 30000;
+const MAX_FORWARD_NONCES = 256;
+const NONCE_PATTERN = /^[0-9a-f]{32}$/;
 
 const NOT_PAIRED_TEXT =
 	"Onhand is not paired with this agent. Ask the person to open Onhand's settings in their browser, turn on the connector, copy the pairing code, and set it as ONHAND_CONNECTOR_TOKEN for this connector.";
+const OTHER_CODE_TEXT =
+	"Another Onhand connector is already running on this computer with a different pairing code. Use the same pairing code for every agent, or close the other one.";
+const PORT_TAKEN_TEXT = (port) =>
+	`Another program is using Onhand's connector port (${port}) on this computer, and it is not Onhand's connector. Close that program and try again. Nothing was sent to it.`;
 const NOT_CONNECTED_TEXT =
 	"Onhand's browser extension is not connected. Ask the person to open the browser where Onhand is installed and check that the connector is turned on in Onhand's settings, then try again.";
 
@@ -50,6 +63,9 @@ export function createLocalConnector({ token = "", port = DEFAULT_PORT, log = ()
 	let nextCallId = 1;
 	const pendingCalls = new Map();
 	const extensionWaiters = new Set();
+	// Nonces this copy has handed to forwarding copies: each is good for one
+	// call, for a short time.
+	const forwardNonces = new Map();
 
 	function setExtension(socket) {
 		if (extension && extension !== socket) extension.close(4000, "Replaced by a newer connection");
@@ -124,20 +140,51 @@ export function createLocalConnector({ token = "", port = DEFAULT_PORT, log = ()
 	}
 
 	// Another copy of this program, started by a second agent, sends its tool
-	// calls here. A web page can reach 127.0.0.1 too, so the request must carry
-	// the pairing code and must not come from a browser origin.
+	// calls here. A web page can reach 127.0.0.1 too, and so can any other
+	// program on this computer, so nothing is run for a caller that has not
+	// proved it holds the pairing code. The code itself never crosses: the
+	// caller asks for a nonce (and gets this copy's proof with it), then signs
+	// that nonce and its request. A nonce is used once, so a request that was
+	// captured cannot be sent again.
 	async function handleHttp(request, response) {
 		const send = (status, body) => {
 			response.writeHead(status, { "content-type": "application/json" });
 			response.end(JSON.stringify(body));
 		};
-		if (request.method !== "POST" || request.url !== "/call") return send(404, { error: "not found" });
+		if (request.method !== "POST" || (request.url !== "/hello" && request.url !== "/call")) return send(404, { error: "not found" });
 		if (request.headers.origin !== undefined) return send(403, { error: "forbidden" });
-		const bearer = /^Bearer (.+)$/.exec(String(request.headers.authorization || ""))?.[1] || "";
-		if (!paired || !sameText(bearer, token)) return send(401, { error: "pairing code does not match" });
+		if (!paired) return send(401, { error: "not paired" });
+		let raw;
 		try {
-			const body = JSON.parse(await readBody(request));
-			send(200, await callExtensionDirect(String(body.tool || ""), body.args ?? {}));
+			raw = await readBody(request);
+		} catch {
+			return send(413, { error: "too large" });
+		}
+		const now = Date.now();
+		for (const [nonce, expires] of forwardNonces) {
+			if (expires <= now) forwardNonces.delete(nonce);
+		}
+		if (request.url === "/hello") {
+			let clientNonce = "";
+			try {
+				clientNonce = String(JSON.parse(raw)?.nonce || "");
+			} catch {}
+			if (!NONCE_PATTERN.test(clientNonce)) return send(400, { error: "bad nonce" });
+			if (forwardNonces.size >= MAX_FORWARD_NONCES) return send(429, { error: "too many pending calls" });
+			const nonce = randomHex();
+			forwardNonces.set(nonce, now + FORWARD_NONCE_TTL_MS);
+			return send(200, { nonce, proof: await hmacHex(token, `${FORWARD_HELLO_PREFIX}${clientNonce}`) });
+		}
+		const nonce = String(request.headers["x-onhand-nonce"] || "");
+		const known = forwardNonces.delete(nonce);
+		const expected = await hmacHex(token, `${FORWARD_CALL_PREFIX}${nonce}:${raw}`);
+		if (!known || !sameText(request.headers["x-onhand-proof"], expected)) return send(401, { error: "pairing code does not match" });
+		try {
+			const body = JSON.parse(raw);
+			const outcome = await callExtensionDirect(String(body.tool || ""), body.args ?? {}, String(body.client || ""));
+			const text = String(outcome?.text || "");
+			const isError = Boolean(outcome?.isError);
+			send(200, { text, isError, proof: await hmacHex(token, `${FORWARD_RESULT_PREFIX}${nonce}:${JSON.stringify([text, isError])}`) });
 		} catch (error) {
 			send(400, { error: error?.message || String(error) });
 		}
@@ -187,7 +234,8 @@ export function createLocalConnector({ token = "", port = DEFAULT_PORT, log = ()
 		});
 	}
 
-	async function callExtensionDirect(tool, args) {
+	// `client` is the name the calling app gave for itself, for display.
+	async function callExtensionDirect(tool, args, client = "") {
 		const waitMs = Math.max(extensionWaitMs, startupGraceMs - (Date.now() - listeningSince));
 		if (!(await waitForExtension(waitMs))) return { text: NOT_CONNECTED_TEXT, isError: true };
 		const socket = extension;
@@ -208,41 +256,63 @@ export function createLocalConnector({ token = "", port = DEFAULT_PORT, log = ()
 					reject(error);
 				},
 			});
-			socket.send(JSON.stringify({ type: "call", id, tool, args }));
+			socket.send(JSON.stringify({ type: "call", id, tool, args, client }));
 		});
 	}
 
-	async function forwardToOwner(tool, args) {
-		const response = await fetch(`http://127.0.0.1:${port}/call`, {
+	// Whatever holds the port is not trusted until it proves the pairing code:
+	// a program that got there first is told nothing about the call, and what
+	// it sends back is not passed on as page text.
+	async function forwardToOwner(tool, args, client = "") {
+		const base = `http://127.0.0.1:${port}`;
+		const headers = { "content-type": "application/json" };
+		const clientNonce = randomHex();
+		let greeting = null;
+		try {
+			const hello = await fetch(`${base}/hello`, { method: "POST", headers, body: JSON.stringify({ nonce: clientNonce }), signal: AbortSignal.timeout(FORWARD_HELLO_TIMEOUT_MS) });
+			greeting = hello.ok ? await hello.json().catch(() => null) : null;
+		} catch (error) {
+			// Nothing answering at all means the owner has exited; a program that
+			// accepts the connection and then stalls is not Onhand's connector.
+			if (error?.name !== "TimeoutError") throw error;
+		}
+		const ownerNonce = String(greeting?.nonce || "");
+		const answeredLikeConnector = NONCE_PATTERN.test(ownerNonce) && typeof greeting?.proof === "string";
+		if (!answeredLikeConnector || !sameText(greeting.proof, await hmacHex(token, `${FORWARD_HELLO_PREFIX}${clientNonce}`))) {
+			log(`The program on 127.0.0.1:${port} could not prove the pairing code; the call was not sent to it.`);
+			return { text: answeredLikeConnector ? OTHER_CODE_TEXT : PORT_TAKEN_TEXT(port), isError: true };
+		}
+		const body = JSON.stringify({ tool, args, client });
+		const response = await fetch(`${base}/call`, {
 			method: "POST",
-			headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-			body: JSON.stringify({ tool, args }),
+			headers: { ...headers, "x-onhand-nonce": ownerNonce, "x-onhand-proof": await hmacHex(token, `${FORWARD_CALL_PREFIX}${ownerNonce}:${body}`) },
+			body,
 			signal: AbortSignal.timeout(callTimeoutMs + Math.max(extensionWaitMs, startupGraceMs) + 2000),
 		});
-		const body = await response.json().catch(() => ({}));
-		if (response.status === 401) {
-			return {
-				text: "Another Onhand connector is already running on this computer with a different pairing code. Use the same pairing code for every agent, or close the other one.",
-				isError: true,
-			};
+		const reply = await response.json().catch(() => ({}));
+		if (!response.ok) throw new Error(reply?.error || `the running connector answered ${response.status}`);
+		const text = String(reply.text || "");
+		const isError = Boolean(reply.isError);
+		if (!sameText(reply.proof, await hmacHex(token, `${FORWARD_RESULT_PREFIX}${ownerNonce}:${JSON.stringify([text, isError])}`))) {
+			return { text: PORT_TAKEN_TEXT(port), isError: true };
 		}
-		if (!response.ok) throw new Error(body?.error || `the running connector answered ${response.status}`);
-		return { text: String(body.text || ""), isError: Boolean(body.isError) };
+		return { text, isError };
 	}
 
-	async function callExtension(tool, args) {
+	async function callExtension(tool, args, meta = {}) {
 		if (!paired) return { text: NOT_PAIRED_TEXT, isError: true };
+		const client = String(meta?.client || "");
 		for (let attempt = 0; attempt < 2; attempt += 1) {
 			if (!server && !(await listen())) {
 				try {
-					return await forwardToOwner(tool, args);
+					return await forwardToOwner(tool, args, client);
 				} catch (error) {
 					// The copy that owned the port has exited: take the port over.
 					if (attempt === 0 && /ECONNREFUSED|fetch failed/i.test(`${error?.cause?.code || ""} ${error?.message || ""}`)) continue;
 					throw error;
 				}
 			}
-			return await callExtensionDirect(tool, args);
+			return await callExtensionDirect(tool, args, client);
 		}
 		return { text: NOT_CONNECTED_TEXT, isError: true };
 	}
@@ -271,6 +341,9 @@ export function createLocalConnector({ token = "", port = DEFAULT_PORT, log = ()
 export function serveStdio(connector, { input = process.stdin, output = process.stdout, onEnd = () => {} } = {}) {
 	const lines = createInterface({ input, crlfDelay: Infinity });
 	const write = (message) => output.write(`${JSON.stringify(message)}\n`);
+	// One program serves one app, so what the app said about itself when it
+	// connected holds for every later call.
+	const session = {};
 	lines.on("line", (line) => {
 		if (!line.trim()) return;
 		let message;
@@ -280,7 +353,7 @@ export function serveStdio(connector, { input = process.stdin, output = process.
 			write(parseErrorResponse());
 			return;
 		}
-		handleRpcMessage(message, { callExtension: connector.callExtension })
+		handleRpcMessage(message, { callExtension: connector.callExtension, session })
 			.then(({ response }) => {
 				if (response) write(response);
 			})
@@ -307,7 +380,9 @@ function isMainModule() {
 
 if (isMainModule()) {
 	const log = (text) => process.stderr.write(`[onhand-connector] ${text}\n`);
-	const token = String(argumentValue("--token") || process.env.ONHAND_CONNECTOR_TOKEN || "").trim();
+	// The pairing code comes from the environment only: a command-line
+	// argument is visible to every user of the computer in the process list.
+	const token = String(process.env.ONHAND_CONNECTOR_TOKEN || "").trim();
 	const port = Number(argumentValue("--port") || process.env.ONHAND_CONNECTOR_PORT || DEFAULT_PORT);
 	const connector = createLocalConnector({ token, port, log });
 	if (!connector.paired) log("No valid pairing code. Set ONHAND_CONNECTOR_TOKEN to the code shown in Onhand's settings.");

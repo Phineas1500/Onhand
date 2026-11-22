@@ -6,7 +6,12 @@
 name = "onhand-connector"
 main = "src/index.mjs"
 compatibility_date = "2026-05-01"
-workers_dev = true
+# Answers only on Onhand's own domain. The account's workers.dev address and
+# the per-version preview addresses are off, so the link a person pastes into
+# a chat site names Onhand and nothing else.
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "connect.useonhand.com", custom_domain = true }]
 
 [[durable_objects.bindings]]
 name = "CONNECTOR_RELAY"

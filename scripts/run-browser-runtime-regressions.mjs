@@ -13464,6 +13464,139 @@ async function assertLiveTranscriptPersistence() {
 	console.log("Live direct answers: persistence, revisions, retraction, restart, and execution/session isolation passed");
 }
 
+// A chat app's marks, made through the connector, become a session in history.
+async function assertConnectorMarksBecomeAHistorySession() {
+	installChromeStorageStub();
+	const noteGone = { value: false };
+	const host = createReplayHost({
+		scrollToAnnotationResult(args) {
+			return args.target === "note" && noteGone.value ? { targetKind: "annotation", noteRect: null } : {};
+		},
+	});
+	const runtime = await configureSmokeRuntime(host);
+	const tab = replaySmokeTab();
+	const ownSessionId = (await runtime.getState()).currentSession.sessionId;
+	const listBefore = (await runtime.getSidebarState()).state.sessionListRevision;
+	const mark = (id, text, note, label = "Onhand") => ({
+		highlight: { tab, annotation: { annotationId: id, matchedText: text } },
+		note: note ? { tab, note: { annotationId: id, note, label } } : null,
+	});
+	const question = "Why does the cake rise?";
+	const first = await runtime.recordConnectorMarks({
+		client: "Claude",
+		question,
+		marks: [mark("c1", "Baking soda releases carbon dioxide when heated.", "This is the gas that lifts the batter.", "The lift"), { highlight: null, note: null }, mark("c2", "The oven must be hot before the tin goes in.")],
+	});
+	// One key per mark asked for, in order: a note's key when the mark has one, and nothing for a mark that was not made.
+	assert.deepEqual(first.actionKeys, ["note:c1", "", "highlight:c2"]);
+	assert.notEqual(first.sessionId, ownSessionId);
+	let state = await runtime.getState();
+	assert.equal(state.currentSession.sessionId, ownSessionId, "the reader's own session stays the open one");
+	assert.equal(state.turns.length, 0);
+	assert.notEqual((await runtime.getSidebarState()).state.sessionListRevision, listBefore, "an open panel is told to list sessions again");
+	let listed = (await runtime.listSessions()).sessions.find((session) => session.id === first.sessionId);
+	assert.equal(listed.title, "Claude: Why does the cake rise");
+	assert.equal(listed.connectorClient, "Claude");
+	assert.equal(listed.highlightCount, 2);
+	assert.equal(listed.noteCount, 1);
+	assert.equal(listed.canRestore, true);
+
+	// A quote that missed and is sent again belongs to the same question; a new question is a new turn in the same session.
+	const resent = mark("c1", "Baking soda releases carbon dioxide when heated.", "This is the gas that lifts the batter.", "The lift");
+	resent.highlight.annotation.reusedExisting = true;
+	const second = await runtime.recordConnectorMarks({ client: "Claude", question, marks: [mark("c3", "Cold ovens give a dense crumb.", "What goes wrong otherwise."), resent] });
+	assert.deepEqual(second.actionKeys, ["note:c3", "note:c1"]);
+	const third = await runtime.recordConnectorMarks({ client: "Claude", question: "How long does it bake?", marks: [mark("c4", "Bake for forty minutes.")] });
+	assert.equal(second.sessionId, first.sessionId);
+	assert.equal(third.sessionId, first.sessionId);
+	// Another app's marks are kept apart, and an app that gave no name still gets a session.
+	const other = await runtime.recordConnectorMarks({ client: "ChatGPT", marks: [mark("g1", "Zest two lemons.")] });
+	const unnamed = await runtime.recordConnectorMarks({ marks: [mark("u1", "Whisk the zest into the sugar.")] });
+	assert.equal(new Set([first.sessionId, other.sessionId, unnamed.sessionId]).size, 3);
+	const sessions = (await runtime.listSessions()).sessions;
+	assert.equal(sessions.find((session) => session.id === other.sessionId).title, "ChatGPT: Replay smoke page", "with no question, the page names the session");
+	assert.equal(sessions.find((session) => session.id === unnamed.sessionId).connectorClient, "A chat app");
+	// The page's title gives way once the app says what was asked.
+	await runtime.recordConnectorMarks({ client: "ChatGPT", question: "Which fruit?", marks: [mark("g2", "Use unwaxed lemons.")] });
+	assert.equal((await runtime.listSessions()).sessions.find((session) => session.id === other.sessionId).title, "ChatGPT: Which fruit");
+
+	const saved = getStoredStore().sessions[first.sessionId];
+	assert.equal(saved.turns.length, 2);
+	const [cakeTurn, timeTurn] = saved.turns;
+	assert.equal(cakeTurn.connectorOrigin, "Claude");
+	assert.equal(cakeTurn.userPrompt, question);
+	assert.deepEqual(cakeTurn.pageActions.map((action) => action.key), ["highlight:c1", "note:c1", "highlight:c2", "highlight:c3", "note:c3"]);
+	assert.equal(cakeTurn.pageActions[0].label, "Highlighted text", "a passage sent again stays the mark it was");
+	assert.equal(cakeTurn.pageActions.filter((action) => action.type === "note").every((action) => action.framed === true), true, "a chat app's notes are marked to be drawn in Onhand's frame");
+	assert.equal(cakeTurn.pageActions.filter((action) => action.type !== "note").some((action) => "framed" in action), false);
+	// The panel's card: one line per mark with the chip marker that jumps to it.
+	assert.equal(
+		cakeTurn.reply,
+		[
+			"Claude marked 3 passages on “Replay smoke page”:",
+			"",
+			"- **The lift.** This is the gas that lifts the batter. [[cite:c1]]",
+			"- “The oven must be hot before the tin goes in.” [[cite:c2]]",
+			"- What goes wrong otherwise. [[cite:c3]]",
+		].join("\n"),
+	);
+	assert.equal(timeTurn.userPrompt, "How long does it bake?");
+	assert.match(timeTurn.reply, /^Claude marked 1 passage on /);
+
+	// A link to a mark: the saved session is found without opening it, and a note the page lost comes back framed.
+	noteGone.value = true;
+	let before = host.calls.length;
+	await runtime.activateAction(first.actionKeys[0], { sessionPath: first.sessionId });
+	let notes = host.calls.slice(before).filter((call) => call.name === "show_note");
+	assert.equal(notes.length, 1);
+	assert.equal(notes[0].args.framed, true);
+	assert.equal(notes[0].args.note, "This is the gas that lifts the batter.");
+	assert.equal(notes[0].args.label, "The lift");
+	assert.equal((await runtime.getState()).currentSession.sessionId, ownSessionId, "opening a link does not change the open session");
+	noteGone.value = false;
+
+	// Putting the session's marks back keeps every note framed.
+	before = host.calls.length;
+	await runtime.restoreSession(first.sessionId);
+	notes = host.calls.slice(before).filter((call) => call.name === "show_note");
+	assert.equal(notes.length, 2);
+	assert.equal(notes.every((call) => call.args.framed === true), true);
+	// Onhand's own notes are not framed.
+	const ownStore = getStoredStore();
+	ownStore.sessions[ownSessionId].pageActions = [
+		{ key: "highlight:own-1", type: "annotation", tabId: 7, windowId: 3, title: tab.title, url: tab.url, annotationId: "own-1", label: "Highlighted text", detail: "Alpha", citationText: "Alpha" },
+		{ key: "note:own-1", type: "note", tabId: 7, windowId: 3, title: tab.title, url: tab.url, annotationId: "own-1", label: "Added note", detail: "Onhand's own note.", citationText: "Onhand's own note." },
+	];
+	await globalThis.chrome.storage.local.set(storedStoreEntries(ownStore));
+	const reopened = await configureSmokeRuntime(host);
+	before = host.calls.length;
+	await reopened.restoreSession(ownSessionId);
+	notes = host.calls.slice(before).filter((call) => call.name === "show_note");
+	assert.equal(notes.length, 1);
+	assert.equal("framed" in notes[0].args, false);
+
+	// The record survives a restart, and a question asked while it is open goes to a session of its own:
+	// nothing the chat app wrote is in the session Onhand's model is given.
+	await reopened.switchSession(first.sessionId);
+	state = await reopened.getState();
+	assert.equal(state.currentSession.connectorClient, "Claude");
+	assert.equal(state.turns.length, 2);
+	assert.equal(state.turns[0].connectorOrigin, "Claude");
+	const clearsBefore = host.calls.filter((call) => call.name === "clear_annotations").length;
+	await reopened.submitPrompt({ prompt: "Summarize this page.", displayPrompt: "Summarize this page.", attachments: [] });
+	await waitForRuntimeCompletion(reopened);
+	state = await reopened.getState();
+	assert.notEqual(state.currentSession.sessionId, first.sessionId);
+	assert.equal(state.currentSession.connectorClient, undefined);
+	assert.equal(state.turns.length, 1);
+	assert.equal(state.turns[0].connectorOrigin, undefined);
+	assert.equal(host.calls.filter((call) => call.name === "clear_annotations").length, clearsBefore, "the marks on the page are left alone");
+	const after = getStoredStore();
+	assert.equal(after.sessions[first.sessionId].turns.length, 2, "the record is unchanged");
+	assert.doesNotMatch(JSON.stringify(after.sessions[state.currentSession.sessionId]), /lifts the batter|carbon dioxide/);
+	console.log("Connector marks: history session per app, one turn per question, framed notes on restore, links without switching, and own-session questions passed");
+}
+
 async function assertPreparationCanBeStoppedWithoutLateContinuation() {
 	installChromeStorageStub();
 	const entered = deferred();
@@ -13908,6 +14041,7 @@ async function main() {
 	await assertSessionReplaySnapshotPayload();
 	await assertSuccessfulAnnotatedTurnAutoPersistsReviewSnapshot();
 	await assertReplayActionActivationCanTargetSavedSession();
+	await assertConnectorMarksBecomeAHistorySession();
 	await assertLocalFileCitationActivationReusesOpenFileTab();
 	await assertReplayActionActivationRepairsStaleAnnotationWithExactSource();
 	await assertRepeatedCitationRecoveryPreservesAnswerIds();
