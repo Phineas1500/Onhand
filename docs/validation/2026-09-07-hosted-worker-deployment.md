@@ -1,6 +1,8 @@
 # Hosted Worker deployment — September 7, 2026
 
-Production endpoint: https://onhand-free-tier.sriram-kiron.workers.dev
+Production endpoint: the `onhand-free-tier` Worker's workers.dev address. Since
+October 18 the service also answers at https://api.useonhand.com, which is
+the address releases use.
 
 Final version: `e76c9a05-c300-430e-92c7-41c67143fb01`, deployed to 100% of
 traffic at `2026-09-07T22:27:40.839Z`.

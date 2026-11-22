@@ -183,11 +183,11 @@ function assertEventRedaction(event, smokeId) {
 	assertDoesNotContain(serialized, "private prompt text", "prompt text");
 	assertDoesNotContain(serialized, "https://example.test/private", "URL");
 	assertDoesNotContain(serialized, "token=secret", "query token");
-	assertDoesNotContain(serialized, "file:///Users/sriram/private.pdf", "file URL");
-	assertDoesNotContain(serialized, "/Users/sriram", "local user path");
+	assertDoesNotContain(serialized, "file:///Users/reader/private.pdf", "file URL");
+	assertDoesNotContain(serialized, "/Users/reader", "local user path");
 	assertDoesNotContain(serialized, "sk-or-secret", "API key");
 	assertDoesNotContain(serialized, "quoted private words", "quoted text");
-	assertDoesNotContain(serialized, "sriram@example.com", "email address");
+	assertDoesNotContain(serialized, "reader@example.com", "email address");
 	assertDoesNotContain(serialized, "chrome-extension://abcdefghijklmnopabcdefghijklmnop", "Chrome extension id");
 
 	if (!serialized.includes("[redacted text]")) throw new Error("Expected redacted text marker in Sentry runtime smoke event");
@@ -212,12 +212,12 @@ const sensitiveMessage = [
 	`Onhand runtime Sentry smoke ${smokeId}.`,
 	'Looked for "quoted private words".',
 	"No visible text matched: private prompt text at https://example.test/private?token=secret-value",
-	"from file:///Users/sriram/private.pdf using sk-or-secret and sriram@example.com.",
+	"from file:///Users/reader/private.pdf using sk-or-secret and reader@example.com.",
 ].join(" ");
 const sensitiveStack = [
 	`Error: ${sensitiveMessage}`,
 	"    at smoke (chrome-extension://abcdefghijklmnopabcdefghijklmnop/onhand-runtime.bundle.js:123:45)",
-	"    at test (file:///Users/sriram/private.js:1:2)",
+	"    at test (file:///Users/reader/private.js:1:2)",
 ].join("\n");
 
 const result = await runtime.captureRuntimeException({

@@ -36,8 +36,7 @@ The previous runtime batch was pushed as
 `b0dd57502dc62dff1151a60253dfc5434edfcf79` and passed
 [GitHub CI](https://github.com/Phineas1500/Onhand/actions/runs/34174540758).
 
-The production Worker is
-[`onhand-free-tier`](https://onhand-free-tier.sriram-kiron.workers.dev).
+The production Worker is `onhand-free-tier`.
 Its previous code and settings were backed up before deployment. All HTTP work was
 paused at 00:52:43 UTC to drain the old implementation and allow KV propagation.
 The current-day ledger was zero before and after the drain; no recent model calls
