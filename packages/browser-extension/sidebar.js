@@ -4175,7 +4175,11 @@
 	function renderAuthPanel(state) {
 		if (!(authPanelEl instanceof HTMLElement)) return;
 		const hiddenByView = replayState.open || pageIndexEl.hidden === false;
-		const needsAuth = !hasUsableOnhandAuth(state);
+		// The panel draws itself once before its first state arrives, and again
+		// with a bare state when the background does not answer. Neither says
+		// anything about sign-in, so neither may show the setup choices: they
+		// flashed on every open for someone already set up.
+		const needsAuth = Boolean(state?.preferences) && !hasUsableOnhandAuth(state);
 		const expiredTurn = needsAuth ? latestSignInExpiredTurn(state) : null;
 		// Put the failed question back so signing in again sends it.
 		if (expiredTurn && restoredSignInExpiredTurnId !== String(expiredTurn.id || "")) {
