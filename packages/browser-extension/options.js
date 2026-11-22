@@ -689,6 +689,84 @@ contextMenuEnabledInput.addEventListener("change", async () => {
 		reportError(error);
 	}
 });
+// The connector (connector.js): another AI app reads and highlights the open
+// page through a program on this computer, or through a relay when one is
+// configured. The background connects when these keys change.
+const connector = globalThis.OnhandConnector;
+const connectorEnabledInput = document.getElementById("connectorEnabled");
+const connectorDetailsEl = document.getElementById("connectorDetails");
+const connectorStatusEl = document.getElementById("connectorStatus");
+const connectorLinkFieldEl = document.getElementById("connectorLinkField");
+let connectorStatusTimer = null;
+async function readConnectorSettings() {
+	const stored = await chrome.storage.local.get({
+		[connector.ENABLED_STORAGE_KEY]: false,
+		[connector.TOKEN_STORAGE_KEY]: "",
+		[connector.RELAY_URL_STORAGE_KEY]: "",
+	});
+	return {
+		enabled: stored[connector.ENABLED_STORAGE_KEY] === true,
+		token: String(stored[connector.TOKEN_STORAGE_KEY] || ""),
+		relayUrl: String(stored[connector.RELAY_URL_STORAGE_KEY] || "").trim(),
+	};
+}
+function connectorStatusText(links) {
+	const connected = (links || []).filter((entry) => entry.state === "connected").map((entry) => entry.kind);
+	if (connected.includes("local") && connected.includes("relay")) return "Connected to a program on this computer and to the relay for chat websites.";
+	if (connected.includes("local")) return "Connected to a program on this computer.";
+	if (connected.includes("relay")) return "Connected to the relay for chat websites. No program on this computer is connected.";
+	return "On, and waiting. No connector program is running on this computer yet.";
+}
+async function refreshConnectorStatus() {
+	const response = await chrome.runtime.sendMessage({ type: "connector:status" }).catch(() => null);
+	if (response?.ok) connectorStatusEl.textContent = connectorStatusText(response.links);
+}
+async function renderConnector() {
+	const settings = await readConnectorSettings();
+	connectorEnabledInput.checked = settings.enabled;
+	connectorDetailsEl.hidden = !settings.enabled;
+	connectorLinkFieldEl.hidden = !settings.relayUrl;
+	clearInterval(connectorStatusTimer);
+	connectorStatusTimer = null;
+	if (!settings.enabled) return;
+	await refreshConnectorStatus();
+	connectorStatusTimer = setInterval(() => refreshConnectorStatus().catch(() => {}), 2000);
+}
+connectorEnabledInput.addEventListener("change", async () => {
+	try {
+		const settings = await readConnectorSettings();
+		const update = { [connector.ENABLED_STORAGE_KEY]: Boolean(connectorEnabledInput.checked) };
+		// The code is made the first time the connector is turned on and kept
+		// after that, so turning it off and on doesn't break a paired app.
+		if (connectorEnabledInput.checked && !connector.PAIRING_CODE_PATTERN.test(settings.token)) {
+			update[connector.TOKEN_STORAGE_KEY] = connector.generatePairingCode();
+		}
+		await chrome.storage.local.set(update);
+		await renderConnector();
+		showToast("Saved");
+	} catch (error) {
+		reportError(error);
+	}
+});
+document.getElementById("copyConnectorToken").addEventListener("click", async () => {
+	try {
+		await navigator.clipboard.writeText((await readConnectorSettings()).token);
+		showToast("Pairing code copied");
+	} catch (error) {
+		reportError(error);
+	}
+});
+document.getElementById("copyConnectorLink").addEventListener("click", async () => {
+	try {
+		const settings = await readConnectorSettings();
+		const link = `${settings.relayUrl.replace(/^ws/i, "http").replace(/\/+$/, "")}/mcp/${settings.token}`;
+		await navigator.clipboard.writeText(link);
+		showToast("Connector link copied");
+	} catch (error) {
+		reportError(error);
+	}
+});
+renderConnector().catch(reportError);
 // Chrome lets Onhand read file:// pages only after the reader turns on file
 // access for it. Changing that restarts Onhand, which closes this page, so the
 // state is read once. Firefox can't grant it; its viewer asks for a local PDF.

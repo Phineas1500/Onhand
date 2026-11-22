@@ -1,0 +1,20 @@
+# Relay for the Onhand connector (prototype). It runs no model and holds no
+# key: a chat site's servers call /mcp/<pairing code>, and the relay passes
+# each tool call to that person's Onhand extension over the WebSocket the
+# extension opened at /socket/<pairing code>. Page text passes through in
+# memory and is never stored or logged.
+name = "onhand-connector"
+main = "src/index.mjs"
+compatibility_date = "2026-05-01"
+workers_dev = true
+
+[[durable_objects.bindings]]
+name = "CONNECTOR_RELAY"
+class_name = "ConnectorRelay"
+
+[[migrations]]
+tag = "v1-connector-relay"
+new_sqlite_classes = ["ConnectorRelay"]
+
+[observability]
+enabled = false

@@ -1,5 +1,6 @@
 import "./live-voice.js";
 import "./live-interruptions.js";
+import "./connector.js";
 import { uploadLiveImage, uploadLiveText } from "./live-responses-files.js";
 import { ONHAND_EXTENSION_RUNTIME_REVISION } from "./runtime-revision.js";
 import { createOnhandBrowserRuntime } from "./onhand-runtime.bundle.js";
@@ -16344,6 +16345,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 	if (changes[ONHAND_CONTEXT_MENU_STORAGE_KEY]) {
 		syncContextMenu().catch((error) => log("Could not update the right-click menu", error?.message || String(error)));
 	}
+	if (ONHAND_CONNECTOR_SETTING_KEYS.some((key) => changes[key])) {
+		syncConnector().catch((error) => log("Could not update the connector", error?.message || String(error)));
+	}
 });
 
 if (chrome.sidePanel?.onOpened?.addListener) {
@@ -16618,6 +16622,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				stack: message.stack,
 			});
 			sendResponse({ ok: true, captured: Boolean(result?.captured) });
+			return;
+		}
+
+		// Options page: is the connector on, and has a program connected to it?
+		if (message?.type === "connector:status") {
+			if (!String(_sender?.url || "").startsWith(chrome.runtime.getURL(""))) {
+				sendResponse({ ok: false, error: "Only Onhand pages can read the connector's status." });
+				return;
+			}
+			await syncConnector();
+			sendResponse({ ok: true, links: connectorLinks.map((entry) => ({ kind: entry.kind, state: entry.link.state() })) });
 			return;
 		}
 
@@ -17493,4 +17508,91 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
 	await setSidebarWindowOpen(windowId, false);
 });
 
+// --- Connector (connector.js) ------------------------------------------------
+//
+// Lets a chat app or agent the reader already uses read the page they have
+// open and highlight passages on it, through a connector program on this
+// computer or a relay. Off unless turned on in settings; with it off nothing
+// here connects anywhere and no alarm is set.
+const ONHAND_CONNECTOR_ALARM = "onhand-connector-reconnect";
+const ONHAND_CONNECTOR_SETTING_KEYS = [
+	globalThis.OnhandConnector.ENABLED_STORAGE_KEY,
+	globalThis.OnhandConnector.TOKEN_STORAGE_KEY,
+	globalThis.OnhandConnector.RELAY_URL_STORAGE_KEY,
+];
+let connectorLinks = [];
+let connectorConfigKey = "";
+let connectorSyncChain = Promise.resolve();
+
+const connectorSessionStorage = () => chrome.storage.session || chrome.storage.local;
+
+const connectorToolDeps = {
+	async listTabs() {
+		const [tabs, focusedWindow] = await Promise.all([chrome.tabs.query({}), chrome.windows.getLastFocused().catch(() => null)]);
+		return { tabs, focusedWindowId: focusedWindow?.id ?? null };
+	},
+	runCommand: (name, args) => handleCommand(name, args),
+	isPdfTab: (tab) => isOwnExtensionPdfViewerUrl(tab?.url) || isLikelyPdfResourceUrl(tab?.url),
+	isOwnViewerUrl: (url) => isOwnExtensionPdfViewerUrl(url),
+	async getLastReadTabId() {
+		const key = globalThis.OnhandConnector.LAST_READ_TAB_STORAGE_KEY;
+		const stored = await connectorSessionStorage().get({ [key]: null });
+		return typeof stored[key] === "number" ? stored[key] : null;
+	},
+	async setLastReadTabId(tabId) {
+		await connectorSessionStorage().set({ [globalThis.OnhandConnector.LAST_READ_TAB_STORAGE_KEY]: tabId });
+	},
+};
+
+// Brings the open connections in line with the settings. A wake-up with
+// unchanged settings only retries a connection that is down.
+function syncConnector() {
+	connectorSyncChain = connectorSyncChain.then(syncConnectorNow, syncConnectorNow);
+	return connectorSyncChain;
+}
+
+async function syncConnectorNow() {
+	const connector = globalThis.OnhandConnector;
+	const stored = await chrome.storage.local.get({
+		[connector.ENABLED_STORAGE_KEY]: false,
+		[connector.TOKEN_STORAGE_KEY]: "",
+		[connector.RELAY_URL_STORAGE_KEY]: "",
+	});
+	const token = String(stored[connector.TOKEN_STORAGE_KEY] || "");
+	const enabled = stored[connector.ENABLED_STORAGE_KEY] === true && connector.PAIRING_CODE_PATTERN.test(token);
+	const relayUrl = String(stored[connector.RELAY_URL_STORAGE_KEY] || "").trim();
+	const targets = enabled
+		? [{ kind: "local", baseUrl: connector.DEFAULT_LOCAL_URL }, ...(/^wss:\/\//i.test(relayUrl) || /^ws:\/\/(127\.0\.0\.1|localhost)[:/]/i.test(relayUrl) ? [{ kind: "relay", baseUrl: relayUrl }] : [])]
+		: [];
+	const configKey = JSON.stringify([token, targets]);
+	if (configKey === connectorConfigKey) {
+		for (const entry of connectorLinks) entry.link.nudge();
+		return;
+	}
+	connectorConfigKey = configKey;
+	for (const entry of connectorLinks) entry.link.stop();
+	connectorLinks = targets.map(({ kind, baseUrl }) => ({
+		kind,
+		link: connector.createLink({
+			kind,
+			baseUrl,
+			token,
+			version: chrome.runtime.getManifest().version,
+			onCall: (tool, args) => connector.runTool(tool, args, connectorToolDeps),
+			log,
+		}),
+	}));
+	for (const entry of connectorLinks) entry.link.start();
+	// A closed connection can only be retried while the worker is awake, and
+	// the worker sleeps after 30 s without one. The alarm wakes it to try again.
+	if (enabled) await chrome.alarms?.create(ONHAND_CONNECTOR_ALARM, { periodInMinutes: 0.5 });
+	else await chrome.alarms?.clear(ONHAND_CONNECTOR_ALARM);
+}
+
+chrome.alarms?.onAlarm.addListener((alarm) => {
+	if (alarm?.name !== ONHAND_CONNECTOR_ALARM) return;
+	syncConnector().catch((error) => log("Connector retry failed", error?.message || String(error)));
+});
+
 initializeExtensionSurface();
+syncConnector().catch((error) => log("Could not start the connector", error?.message || String(error)));

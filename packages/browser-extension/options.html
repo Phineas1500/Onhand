@@ -589,6 +589,30 @@
       </section>
 
       <section>
+        <h2>Other AI apps</h2>
+        <div class="toggle-field">
+          <label class="toggle-row" for="connectorEnabled">
+            <input id="connectorEnabled" type="checkbox" />
+            <span>Let an AI app I use read and highlight my open page (experimental)</span>
+          </label>
+          <p class="help">Claude Code, Codex and similar apps can then read the page you have open and highlight passages on it. The model is theirs: Onhand only reads and marks the page, and sends nothing to Onhand's own service.</p>
+        </div>
+        <div id="connectorDetails" hidden>
+          <p id="connectorStatus" class="help" role="status"></p>
+          <div class="field">
+            <label>Pairing code</label>
+            <button id="copyConnectorToken" type="button">Copy pairing code</button>
+            <p class="help">The connector program needs this code. Anyone who has it can read pages open in this browser, so treat it like a password.</p>
+          </div>
+          <div id="connectorLinkField" class="field" hidden>
+            <label>Link for chat websites</label>
+            <button id="copyConnectorLink" type="button">Copy connector link</button>
+            <p class="help">Paste it where ChatGPT or Claude asks for a connector's address. The link contains your pairing code.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
         <h2>Files on your computer</h2>
         <p id="localFilesStatus" class="help">Checking…</p>
         <div id="localFilesAllow" hidden>
@@ -646,6 +670,7 @@
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
     <script src="page-error-reporter.js"></script>
+    <script src="connector.js"></script>
     <script type="module" src="options.js"></script>
   </body>
 </html>
